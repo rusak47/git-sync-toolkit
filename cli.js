@@ -185,10 +185,12 @@ async function backup() {
       throw new Error("backup --delete requires a backup/<name> ref");
     }
     const target = ref(name, "backup ref");
-    const report = { dryRun: !apply, action: "delete", name, target };
-    output(report);
-    if (!apply) return;
+    if (!apply) {
+      output({ dryRun: true, action: "delete", name, target });
+      return;
+    }
     git(["update-ref", "-d", `refs/heads/${name}`, target]);
+    output({ dryRun: false, action: "delete", deleted: true, name, target });
     return;
   }
   if (!a.list) throw new Error("backup requires --list or --delete <ref>");
