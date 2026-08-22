@@ -133,7 +133,18 @@ modification first and add `--apply` to write it:
 <command>node .docs/scripts/upstream/cli.js cleanup --plan .docs/fork-sync-state/my-branch-cleanup.json --modify 10c38bbf --move-before ca86107b --apply</command>
 </example>
 
-Backups and patch snapshots are stored in ignored `.docs` state. Resolve
-conflicts with Git and use `git rebase --abort` to abandon an operation.
+Backups and patch snapshots are stored in ignored `.docs` state. If cleanup
+stops on a conflict, resolve and stage the files, then resume the plan:
+
+<example>
+<command>git status</command>
+<command>git add &lt;resolved-files&gt;</command>
+<command>node .docs/scripts/upstream/cli.js cleanup --plan .docs/fork-sync-state/my-branch-cleanup.json --continue</command>
+</example>
+
+`cleanup --continue` preserves the staged resolution for the interrupted
+`--no-commit` cherry-pick and resumes the remaining group and later groups.
+To abandon instead, use `git cherry-pick --abort` and restore the generated
+backup. Never use this toolkit to push fork changes to `upstream`; upstream
 Never use this toolkit to push fork changes to `upstream`; upstream
 contributions should use separate branches based directly on upstream.

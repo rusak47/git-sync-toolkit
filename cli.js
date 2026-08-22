@@ -310,6 +310,37 @@ async function cleanup() {
   }
   if (!a.plan) throw new Error("cleanup requires --plan <file> (or --generate <file>)");
   const plan = JSON.parse(await readFile(a.plan, "utf8"));
+  if (a.continue) {
+    const cherryPick = ref("CHERRY_PICK_HEAD", "interrupted cherry-pick");
+    if (git(["diff", "--name-only", "--diff-filter=U"])) {
+      throw new Error("Resolve and stage all conflicts before cleanup --continue");
+    }
+    const groupIndex = (plan.replay || []).findIndex(group => group.commits.includes(cherryPick));
+    const commitIndex = groupIndex < 0 ? -1 : plan.replay[groupIndex].commits.indexOf(cherryPick);
+    if (groupIndex < 0 || commitIndex < 0) {
+      throw new Error("Interrupted cherry-pick is not in the cleanup plan");
+    }
+    git(["cherry-pick", "--quit"]);
+    const replay = plan.replay || [];
+    for (let i = groupIndex; i < replay.length; i++) {
+      const group = replay[i];
+      const commits = group.commits.map(commit => ref(commit, "cleanup commit"));
+      if (commits.length === 1) {
+        if (i !== groupIndex || commitIndex !== 0) throw new Error("Invalid cleanup continuation state");
+        git(["commit", "-C", commits[0]]);
+        continue;
+      }
+      const start = i === groupIndex ? commitIndex + 1 : 0;
+      for (const commit of commits.slice(start)) git(["cherry-pick", "--no-commit", commit]);
+      if (!group.subject) throw new Error("Squash group requires a subject");
+      git(["commit", "-m", group.subject]);
+    }
+    validate();
+    const branch = git(["branch", "--show-current"]) || config.baseBranch;
+    await recordAppliedState(config.originRemote, branch, remoteTip(config.originRemote, branch));
+    output({ continued: true, branch, validatedHead: ref("HEAD", "validated HEAD") });
+    return;
+  }
   const base = ref(plan.base || a.base || `origin/${config.baseBranch}`, "cleanup base");
   const current = ref(a.branch || "HEAD", "cleanup branch");
   const local = new Set(range(base, current));
