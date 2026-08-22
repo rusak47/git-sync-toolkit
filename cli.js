@@ -178,6 +178,19 @@ async function restore() {
   if (!git(["branch", "--show-current"])) throw new Error("Refusing to restore a detached HEAD");
   git(["reset", "--hard", backup]);
 }
+async function backup() {
+  if (!a.list) throw new Error("backup requires --list");
+  const backups = gitLines([
+    "for-each-ref",
+    "--sort=-creatordate",
+    "--format=%(refname:short)\t%(objectname)\t%(creatordate:iso8601)\t%(subject)",
+    "refs/heads/backup",
+  ]).map(line => {
+    const [name, sha, createdAt, ...subject] = line.split("\t");
+    return { name, sha, createdAt, subject: subject.join("\t") };
+  });
+  output(backups);
+}
 async function cleanup() {
   if (a.modify) {
     if (!a.plan) throw new Error("--modify requires --plan <file>");
@@ -360,6 +373,6 @@ async function publish() {
   validate();
   git(["push", `--force-with-lease=refs/heads/${branch}:${state.expectedRemote}`, remote, `HEAD:refs/heads/${branch}`]);
 }
-const commands = { analyze, classify, land, landed, refresh, sync, adopt, restore, publish, cleanup, "reset-candidates": resetCandidates };
+const commands = { analyze, classify, land, landed, refresh, sync, adopt, restore, backup, publish, cleanup, "reset-candidates": resetCandidates };
 try { if (!commands[command]) throw new Error(`Unknown operation: ${command}`); await commands[command](); }
 catch (e) { console.error(`upstream toolkit: ${e.message}`); process.exitCode = 1; }

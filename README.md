@@ -76,6 +76,15 @@ ignored: it is reference material, not executable toolkit code.
 currently checked-out branch to the named backup ref; verify the ref before
 using it.
 
+List available recovery backups before restoring one:
+
+<example>
+<command>node .docs/scripts/upstream/cli.js backup --list</command>
+<command>node .docs/scripts/upstream/cli.js backup --list --json</command>
+</example>
+
+Backups are local `backup/*` branches; listing them never changes refs.
+
 ### Validate and publish separately
 
 `cleanup --apply` runs the configured validation command after rebuilding the
