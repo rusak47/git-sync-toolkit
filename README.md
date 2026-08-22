@@ -84,6 +84,15 @@ List available recovery backups before restoring one:
 </example>
 
 Backups are local `backup/*` branches; listing them never changes refs.
+Preview and then explicitly delete an individual backup:
+
+<example>
+<command>node .docs/scripts/upstream/cli.js backup --delete backup/master-1787422109630</command>
+<command>node .docs/scripts/upstream/cli.js backup --delete backup/master-1787422109630 --apply</command>
+</example>
+
+Deletion never accepts refs outside `backup/*`, deletes only the exact
+validated ref, and uses `--apply` as a mandatory confirmation.
 
 ### Validate and publish separately
 

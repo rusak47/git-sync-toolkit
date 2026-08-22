@@ -179,7 +179,19 @@ async function restore() {
   git(["reset", "--hard", backup]);
 }
 async function backup() {
-  if (!a.list) throw new Error("backup requires --list");
+  if (a.delete) {
+    const name = a.delete === true ? a._[1] : a.delete;
+    if (!name || !name.startsWith("backup/") || /[\s;&|`$]/.test(name)) {
+      throw new Error("backup --delete requires a backup/<name> ref");
+    }
+    const target = ref(name, "backup ref");
+    const report = { dryRun: !apply, action: "delete", name, target };
+    output(report);
+    if (!apply) return;
+    git(["update-ref", "-d", `refs/heads/${name}`, target]);
+    return;
+  }
+  if (!a.list) throw new Error("backup requires --list or --delete <ref>");
   const backups = gitLines([
     "for-each-ref",
     "--sort=-creatordate",
