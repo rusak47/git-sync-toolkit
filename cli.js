@@ -24,6 +24,9 @@ async function recordAppliedState(remote, branch, expectedRemote) {
     validatedHead: ref("HEAD", "validated HEAD"),
   }, null, 2)}\n`);
 }
+function remoteTip(remote, branch) {
+  return git(["ls-remote", remote, `refs/heads/${branch}`]).split(/\s+/)[0] || "";
+}
 
 async function analyze() {
   const upstream = ref(target, "upstream target"), base = ref(`HEAD`, "HEAD");
@@ -49,7 +52,7 @@ async function land() {
   git(["rebase", base]);
   validate();
   const branch = a.branch || git(["branch", "--show-current"]);
-  await recordAppliedState(remote, branch, ref(`${remote}/${branch}`, "origin branch"));
+  await recordAppliedState(remote, branch, remoteTip(remote, branch));
   if (a.push) git(["push", `--force-with-lease=refs/heads/${branch}:${ref(`${remote}/${branch}`, "origin branch")}`, remote, `HEAD:refs/heads/${branch}`]);
 }
 async function landed() {
@@ -140,7 +143,7 @@ async function sync() {
   ledger.lastMergedUpstream = a.target || target; await saveLedger(ledger);
   const remote = assertPushRemote(a.remote || config.originRemote);
   const branch = git(["branch", "--show-current"]) || config.baseBranch;
-  await recordAppliedState(remote, branch, ref(`${remote}/${branch}`, "origin branch"));
+  await recordAppliedState(remote, branch, remoteTip(remote, branch));
   if (a.push) git(["push", `--force-with-lease=refs/heads/${branch}:${ref(`${remote}/${branch}`, "origin branch")}`, remote, `HEAD:refs/heads/${branch}`]);
 }
 async function adopt() {
@@ -344,7 +347,7 @@ async function cleanup() {
   requireClean(true);
   git(["fetch", "--prune", "--", config.originRemote]);
   const branch = git(["branch", "--show-current"]) || config.baseBranch;
-  const expectedRemote = ref(`${config.originRemote}/${branch}`, "origin branch");
+  const expectedRemote = remoteTip(config.originRemote, branch);
   const backup = `backup/${(report.branch || config.baseBranch).replace(/[^A-Za-z0-9._-]/g, "-")}-${Date.now()}`;
   git(["branch", backup, "HEAD"]);
   git(["reset", "--keep", base]);
@@ -382,7 +385,7 @@ async function publish() {
   let state;
   try { state = JSON.parse(await readFile(config.appliedState, "utf8")); }
   catch (e) { if (e.code === "ENOENT") throw new Error("No validated apply state found; run an apply operation first"); throw e; }
-  const live = git(["ls-remote", remote, `refs/heads/${branch}`]).split(/\s+/)[0];
+  const live = remoteTip(remote, branch);
   assertValidatedState(state, { remote, branch, expectedRemote: live, validatedHead: ref("HEAD", "current HEAD") });
   validate();
   git(["push", `--force-with-lease=refs/heads/${branch}:${state.expectedRemote}`, remote, `HEAD:refs/heads/${branch}`]);

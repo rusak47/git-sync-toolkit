@@ -94,6 +94,10 @@ Preview and then explicitly delete an individual backup:
 Deletion never accepts refs outside `backup/*`, deletes only the exact
 validated ref, and uses `--apply` as a mandatory confirmation.
 
+Cleanup also supports local-only worktree branches that do not yet have a
+matching `origin/<branch>`; validation still runs, but publishing requires a
+separate remote branch decision.
+
 ### Validate and publish separately
 
 `cleanup --apply` runs the configured validation command after rebuilding the
