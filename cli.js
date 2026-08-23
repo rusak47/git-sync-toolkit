@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 import { parseArgs, git, gitLines, ref, range, ancestor, mergeBase, patchIds, loadLedger, saveLedger, requireClean, assertPushRemote, assertValidatedState, commitSummary, config } from "./lib.js";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
 const a = parseArgs(process.argv.slice(2)), command = a._[0] || "analyze";
+const invocationCwd = process.cwd();
+for (const option of ["plan", "generate"]) {
+  if (a[option] && !isAbsolute(a[option])) a[option] = resolve(invocationCwd, a[option]);
+}
 if (a.worktree) {
   let selected = a.worktree;
   const lines = git(["worktree", "list", "--porcelain"]).split("\n");

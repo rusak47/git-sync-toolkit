@@ -245,6 +245,10 @@ match the branch checked out there. If the plan was intentionally copied to
 that worktree, combine both
 flags:
 
+Plan and generated-plan paths are resolved relative to the directory where the
+toolkit command was launched, before `--worktree` changes Git's working
+directory. Absolute paths are also supported.
+
 ```sh
 node /path/to/git-sync-toolkit/cli.js cleanup \
   --worktree /path/to/repository/worktrees/feature \
