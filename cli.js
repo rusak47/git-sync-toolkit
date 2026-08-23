@@ -351,7 +351,16 @@ async function cleanup() {
         continue;
       }
       const start = i === groupIndex ? commitIndex + 1 : 0;
-      for (const commit of commits.slice(start)) git(["cherry-pick", "--no-commit", commit]);
+      for (const [offset, commit] of commits.slice(start).entries()) {
+        await writeCleanupProgress({
+          branch: git(["branch", "--show-current"]) || config.baseBranch,
+          plan: a.plan,
+          groupIndex: i,
+          commitIndex: start + offset,
+          commit,
+        });
+        git(["cherry-pick", "--no-commit", commit]);
+      }
       if (!group.subject) throw new Error("Squash group requires a subject");
       git(["commit", "-m", group.subject]);
     }
