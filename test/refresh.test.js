@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 
 test("refresh defaults to a read-only origin update plan", () => {
   const root = fileURLToPath(new URL("../../../../", import.meta.url));
-  const output = execFileSync(process.execPath, [".docs/scripts/upstream/cli.js", "refresh", "--json"], { cwd: root, encoding: "utf8" });
+  const cli = fileURLToPath(new URL("../cli.js", import.meta.url));
+  const output = execFileSync(process.execPath, [cli, "refresh", "--json"], { cwd: root, encoding: "utf8" });
   const plan = JSON.parse(output);
   assert.equal(plan.dryRun, true);
   assert.match(plan.remoteRef, /^origin\//);
