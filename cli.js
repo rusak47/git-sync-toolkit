@@ -255,6 +255,9 @@ async function cleanup() {
     const branch = git(["branch", "--show-current"]);
     if (!branch) throw new Error("Refusing to truncate a detached HEAD");
     const current = ref("HEAD", "current HEAD");
+    if (!ancestor(base, current)) {
+      throw new Error(`Truncate base ${base} is not an ancestor of current HEAD ${current}; regenerate the plan for this branch`);
+    }
     const report = { dryRun: !apply, action: "truncate", branch, current, base };
     output(report);
     if (!apply) return;
@@ -468,6 +471,9 @@ async function cleanup() {
   }
   const base = ref(plan.base || a.base || `origin/${config.baseBranch}`, "cleanup base");
   const current = ref(a.branch || "HEAD", "cleanup branch");
+  if (!ancestor(base, current)) {
+    throw new Error(`Cleanup base ${base} is not an ancestor of current HEAD ${current}; regenerate the plan for this branch`);
+  }
   const local = new Set(range(base, current));
   const replay = plan.replay || [];
   const dropped = (plan.drop || []).map(item => typeof item === "string" ? { commit: item } : item);
