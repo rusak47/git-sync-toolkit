@@ -1,3 +1,5 @@
+import { access } from "node:fs/promises";
+
 const list = (name, fallback = []) => {
   try { return process.env[name] ? JSON.parse(process.env[name]) : fallback; }
   catch { throw new Error(`${name} must contain a JSON array`); }
@@ -17,3 +19,11 @@ export const config = {
   forkOwned: list("SYNC_FORK_OWNED", []),
   hotFiles: list("SYNC_HOT_FILES", []),
 };
+
+try {
+  await access(new URL("./config.local.js", import.meta.url));
+  const local = await import("./config.local.js");
+  Object.assign(config, local.config || local.default || {});
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}

@@ -36,6 +36,22 @@ Validation defaults to the toolkit's own tests. Replace it for a host
 repository by setting `SYNC_VALIDATION_COMMANDS` to a JSON array of
 `[command,args]` pairs.
 
+For persistent project settings, create the ignored `config.local.js` beside
+the toolkit:
+
+```js
+export const config = {
+  originRemote: "fork",
+  upstreamRemote: "source",
+  baseBranch: "main",
+  forkOwned: ["docs/**"],
+  hotFiles: ["src/core.js"],
+  validationCommands: [["npm", ["test"]]],
+};
+```
+
+`config.local.js` overrides defaults without being committed or pushed.
+
 ## Examples
 
 ### Inspect and classify changes
