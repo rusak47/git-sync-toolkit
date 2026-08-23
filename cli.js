@@ -6,7 +6,18 @@ import { execFileSync } from "node:child_process";
 
 const a = parseArgs(process.argv.slice(2)), command = a._[0] || "analyze";
 if (a.worktree) {
-  try { process.chdir(a.worktree); }
+  let selected = a.worktree;
+  const lines = git(["worktree", "list", "--porcelain"]).split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].startsWith("worktree ")) continue;
+    const end = lines.indexOf("", i);
+    const block = lines.slice(i, end < 0 ? lines.length : end);
+    if (block.includes(`branch refs/heads/${a.worktree}`)) {
+      selected = lines[i].slice("worktree ".length);
+      break;
+    }
+  }
+  try { process.chdir(selected); }
   catch (error) { throw new Error(`Cannot use worktree ${a.worktree}: ${error.message}`); }
 }
 const target = a._[1] || `${config.upstreamRemote}/${config.baseBranch}`;

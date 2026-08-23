@@ -218,9 +218,11 @@ node /path/to/git-sync-toolkit/cli.js cleanup \
   --plan /path/to/plan.json
 ```
 
-`--worktree` changes the Git working directory used by the operation; it does
-not rebind the plan. The plan branch must still match the branch checked out
-there. If the plan was intentionally copied to that worktree, combine both
+`--worktree` accepts either a worktree path or an exact branch name and resolves
+branch names through Git's worktree list. It changes the Git working directory
+used by the operation; it does not rebind the plan. The plan branch must still
+match the branch checked out there. If the plan was intentionally copied to
+that worktree, combine both
 flags:
 
 ```sh
