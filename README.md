@@ -1,4 +1,4 @@
-# 9router git-sync-toolkit toolkit
+# Git synchronization toolkit
 
 Node ESM, intentionally dependency-free. Run from the repository root:
 
@@ -8,7 +8,7 @@ node .docs/scripts/git-sync-toolkit/cli.js <operation> [target] [options]
 
 All operations are read-only by default. `--apply` is required for fetch,
 rebase, cherry-pick, ledger, or patch writes. `--push` is accepted by `land`
-and `sync`, uses `--force-with-lease`, and never permits pushes to `git-sync-toolkit`.
+and `sync`, uses `--force-with-lease`, and never permits pushes to `upstream`.
 `refresh` updates the current branch from its `origin/<branch>` counterpart
 using fast-forward when possible, otherwise rebase. Apply operations require a
 clean tree; `land` and `sync` create `backup/master-TIMESTAMP`.
@@ -18,18 +18,18 @@ ignored: it is reference material, not executable toolkit code.
 
 ## Repository configuration
 
-The toolkit is repository-agnostic. Defaults are `origin`, `git-sync-toolkit`, and
+The toolkit is repository-agnostic. Defaults are `origin`, `upstream`, and
 `master`; override them without editing the toolkit:
 
 <example>
-<command>SYNC_ORIGIN_REMOTE=fork SYNC_git-sync-toolkit_REMOTE=source SYNC_BASE_BRANCH=main node .docs/scripts/git-sync-toolkit/cli.js refresh --remoteRef fork/main</command>
+<command>SYNC_ORIGIN_REMOTE=fork SYNC_UPSTREAM_REMOTE=source SYNC_BASE_BRANCH=main node .docs/scripts/git-sync-toolkit/cli.js refresh --remoteRef fork/main</command>
 </example>
 
 Repository-specific ownership and risk settings use JSON-array environment
 variables:
 
 <example>
-<command>SYNC_FORK_OWNED='["docs/**","vendor/**"]' SYNC_HOT_FILES='["src/core.js"]' node .docs/scripts/git-sync-toolkit/cli.js analyze git-sync-toolkit/main --json</command>
+<command>SYNC_FORK_OWNED='["docs/**","vendor/**"]' SYNC_HOT_FILES='["src/core.js"]' node .docs/scripts/git-sync-toolkit/cli.js analyze upstream/main --json</command>
 </example>
 
 Validation defaults to the toolkit's own tests. Replace it for a host
@@ -42,7 +42,7 @@ the toolkit:
 ```js
 export const config = {
   originRemote: "fork",
-  git-sync-toolkitRemote: "source",
+  upstreamRemote: "source",
   baseBranch: "main",
   forkOwned: ["docs/**"],
   hotFiles: ["src/core.js"],
@@ -57,10 +57,10 @@ export const config = {
 ### Inspect and classify changes
 
 <example>
-<command>node .docs/scripts/git-sync-toolkit/cli.js analyze git-sync-toolkit/master --json</command>
+<command>node .docs/scripts/git-sync-toolkit/cli.js analyze upstream/master --json</command>
 <command>node .docs/scripts/git-sync-toolkit/cli.js classify --branch feature/my-work</command>
-<command>node .docs/scripts/git-sync-toolkit/cli.js landed git-sync-toolkit/master</command>
-<command>node .docs/scripts/git-sync-toolkit/cli.js reset-candidates git-sync-toolkit/master</command>
+<command>node .docs/scripts/git-sync-toolkit/cli.js landed upstream/master</command>
+<command>node .docs/scripts/git-sync-toolkit/cli.js reset-candidates upstream/master</command>
 </example>
 
 ### Refresh a worktree from fork origin
@@ -78,15 +78,15 @@ export const config = {
 <command>node .docs/scripts/git-sync-toolkit/cli.js land --branch feature/my-work --apply --push</command>
 </example>
 
-### Sync fork origin from an git-sync-toolkit tag or commit
+### Sync fork origin from an upstream tag or commit
 
 <example>
-<command>node .docs/scripts/git-sync-toolkit/cli.js sync --target git-sync-toolkit/master --json</command>
+<command>node .docs/scripts/git-sync-toolkit/cli.js sync --target upstream/master --json</command>
 <command>node .docs/scripts/git-sync-toolkit/cli.js sync --target v0.5.56 --apply</command>
 <command>node .docs/scripts/git-sync-toolkit/cli.js sync --target v0.5.56 --apply --push</command>
 </example>
 
-### Adopt an git-sync-toolkit PR temporarily
+### Adopt an upstream PR temporarily
 
 <example>
 <command>node .docs/scripts/git-sync-toolkit/cli.js adopt 3352</command>
@@ -163,7 +163,7 @@ remote tip, and does not push. `publish --apply` then compares the live remote
 tip and local `HEAD` with the values captured during validation, validates
 again, and pushes with `--force-with-lease`. If someone changes
 `origin/master` or the local result in between, publishing is rejected. It
-rejects `git-sync-toolkit`; use `--skip-validation` only when explicitly necessary.
+rejects `upstream`; use `--skip-validation` only when explicitly necessary.
 
 `--generate` preserves every commit initially, includes each commit subject,
 and leaves `reason` as `null`. Edit the local plan before applying it: move a
@@ -236,6 +236,5 @@ With `--worktree`, `--rebind --apply` updates only the plan’s `branch` field t
 the branch detected in the selected worktree. It does not switch branches,
 rewrite commits, or apply cleanup.
 To abandon instead, use `git cherry-pick --abort` and restore the generated
-backup. Never use this toolkit to push fork changes to `git-sync-toolkit`; git-sync-toolkit
-Never use this toolkit to push fork changes to `git-sync-toolkit`; git-sync-toolkit
-contributions should use separate branches based directly on git-sync-toolkit.
+backup. Never use this toolkit to push fork changes to `upstream`; upstream
+contributions should use separate branches based directly on upstream.
