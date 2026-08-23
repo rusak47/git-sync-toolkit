@@ -197,6 +197,23 @@ and later groups even when `CHERRY_PICK_HEAD` is unavailable.
 If incoming changes should always win, add `--auto-accept-incoming` to both the
 initial cleanup command and any continuation command. This selects `theirs`
 for every conflicted path and stages the result; review the resulting diff.
+
+If the initial cleanup stopped because `--auto-accept-incoming` was omitted,
+do not rerun the initial `--apply` command. Continue the interrupted cleanup
+and add the flag:
+
+```sh
+node cli.js cleanup \
+  --plan path/to/plan.json \
+  --worktree feature/my-work \
+  --continue \
+  --auto-accept-incoming
+```
+
+The toolkit resumes from persisted cleanup progress, accepts the incoming
+version for unresolved paths, stages those files, and continues the remaining
+replay. Review the resulting diff before publishing.
+
 Cleanup verifies that the plan branch matches the currently checked-out branch
 and reports the detected worktree. For a deliberately copied plan, rebind it
 explicitly before applying:
