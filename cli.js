@@ -23,7 +23,9 @@ if (a.worktree) {
 const target = a._[1] || `${config.upstreamRemote}/${config.baseBranch}`;
 const apply = a.apply === true || a.apply === "true";
 const json = a.json === true;
-const output = x => console.log(json ? JSON.stringify(x, null, 2) : x);
+const output = x => json
+  ? console.log(JSON.stringify(x, null, 2))
+  : console.dir(x, { depth: null, colors: false });
 function validate() {
   if (a["skip-validation"]) return;
   for (const [command, args] of config.validationCommands) {
