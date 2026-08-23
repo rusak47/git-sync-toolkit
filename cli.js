@@ -406,22 +406,22 @@ async function cleanup() {
     try { progress = JSON.parse(await readFile(config.cleanupProgress, "utf8")); }
     catch (e) {
       if (e.code !== "ENOENT") throw e;
-      const cherryPick = ref("CHERRY_PICK_HEAD", "interrupted cherry-pick");
-      progress = { groupIndex: (plan.replay || []).findIndex(group => group.commits.includes(cherryPick)), commitIndex: 0, commit: cherryPick };
+      const interruptedCommit = ref("CHERRY_PICK_HEAD", "interrupted cherry-pick");
+      progress = { groupIndex: (plan.replay || []).findIndex(group => group.commits.includes(interruptedCommit)), commitIndex: 0, commit: interruptedCommit };
     }
     const groupIndex = progress.groupIndex;
     const commitIndex = progress.commitIndex;
-    const cherryPick = progress.commit;
+    const interruptedCommit = progress.commit;
     if (progress.plan && progress.plan !== a.plan) {
       throw new Error("Cleanup progress belongs to a different plan");
     }
-    if (!Number.isInteger(groupIndex) || !Number.isInteger(commitIndex) || !cherryPick) {
+    if (!Number.isInteger(groupIndex) || !Number.isInteger(commitIndex) || !interruptedCommit) {
       throw new Error("Cleanup progress is invalid");
     }
     if (git(["diff", "--name-only", "--diff-filter=U"]) && !a["auto-accept-incoming"]) {
       throw new Error("Resolve and stage all conflicts before cleanup --continue");
     }
-    if (groupIndex < 0 || !plan.replay[groupIndex] || plan.replay[groupIndex].commits[commitIndex] !== cherryPick) {
+    if (groupIndex < 0 || !plan.replay[groupIndex] || plan.replay[groupIndex].commits[commitIndex] !== interruptedCommit) {
       throw new Error("Interrupted cherry-pick is not in the cleanup plan");
     }
     if (a["auto-accept-incoming"]) autoAcceptIncoming();
