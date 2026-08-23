@@ -354,6 +354,22 @@ async function cleanup() {
   }
   if (!a.plan) throw new Error("cleanup requires --plan <file> (or --generate <file>)");
   const plan = JSON.parse(await readFile(a.plan, "utf8"));
+  const branch = git(["branch", "--show-current"]);
+  const worktree = git(["rev-parse", "--show-toplevel"]);
+  if (a.rebind) {
+    if (!branch) throw new Error("Refusing to rebind a plan from detached HEAD");
+    const rebound = { ...plan, branch };
+    output({ dryRun: !apply, action: "rebind", worktree, branch, plan: rebound });
+    if (apply) {
+      const temporary = `${a.plan}.tmp-${process.pid}`;
+      await writeFile(temporary, `${JSON.stringify(rebound, null, 2)}\n`);
+      await rename(temporary, a.plan);
+    }
+    return;
+  }
+  if (plan.branch && plan.branch !== branch) {
+    throw new Error(`Cleanup plan branch ${plan.branch} does not match current branch ${branch || "(detached)"} in ${worktree}; use --rebind --apply intentionally`);
+  }
   if (a.continue) {
     let progress;
     try { progress = JSON.parse(await readFile(config.cleanupProgress, "utf8")); }
@@ -416,10 +432,10 @@ async function cleanup() {
       git(["commit", "-m", group.subject]);
     }
     validate();
-    const branch = git(["branch", "--show-current"]) || config.baseBranch;
-    await recordAppliedState(config.originRemote, branch, remoteTip(config.originRemote, branch));
+    const currentBranch = branch || config.baseBranch;
+    await recordAppliedState(config.originRemote, currentBranch, remoteTip(config.originRemote, currentBranch));
     await clearCleanupProgress();
-    output({ continued: true, branch, validatedHead: ref("HEAD", "validated HEAD") });
+    output({ continued: true, worktree, branch: currentBranch, validatedHead: ref("HEAD", "validated HEAD") });
     return;
   }
   const base = ref(plan.base || a.base || `origin/${config.baseBranch}`, "cleanup base");
@@ -458,8 +474,8 @@ async function cleanup() {
   if (!apply) return;
   requireClean(true);
   git(["fetch", "--prune", "--", config.originRemote]);
-  const branch = git(["branch", "--show-current"]) || config.baseBranch;
-  const expectedRemote = remoteTip(config.originRemote, branch);
+  const currentBranch = branch || config.baseBranch;
+  const expectedRemote = remoteTip(config.originRemote, currentBranch);
   const backup = `backup/${(report.branch || config.baseBranch).replace(/[^A-Za-z0-9._-]/g, "-")}-${Date.now()}`;
   git(["branch", backup, "HEAD"]);
   git(["reset", "--keep", base]);
@@ -478,7 +494,7 @@ async function cleanup() {
     git(["commit", "-m", group.subject]);
   }
   validate();
-  await recordAppliedState(config.originRemote, branch, expectedRemote);
+  await recordAppliedState(config.originRemote, currentBranch, expectedRemote);
   await clearCleanupProgress();
 }
 async function publish() {
