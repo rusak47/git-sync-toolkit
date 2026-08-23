@@ -372,7 +372,8 @@ async function cleanup() {
     return;
   }
   if (plan.branch && plan.branch !== branch) {
-    throw new Error(`Cleanup plan branch ${plan.branch} does not match current branch ${branch || "(detached)"} in ${worktree}; if this target branch is correct, run from that worktree or use --worktree <path>; otherwise use --rebind --apply intentionally`);
+    const worktrees = git(["worktree", "list"]);
+    throw new Error(`Cleanup plan branch ${plan.branch} does not match current branch ${branch || "(detached)"} in ${worktree}; if this target branch is correct, run from that worktree or use --worktree <path>; otherwise use --rebind --apply intentionally.\nAvailable worktrees:\n${worktrees}`);
   }
   if (a.continue) {
     let progress;

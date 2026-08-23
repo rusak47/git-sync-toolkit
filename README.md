@@ -220,7 +220,19 @@ node /path/to/git-sync-toolkit/cli.js cleanup \
 
 `--worktree` changes the Git working directory used by the operation; it does
 not rebind the plan. The plan branch must still match the branch checked out
-there.
+there. If the plan was intentionally copied to that worktree, combine both
+flags:
+
+```sh
+node /path/to/git-sync-toolkit/cli.js cleanup \
+  --worktree /path/to/repository/worktrees/feature \
+  --plan /path/to/plan.json \
+  --rebind --apply
+```
+
+With `--worktree`, `--rebind --apply` updates only the plan’s `branch` field to
+the branch detected in the selected worktree. It does not switch branches,
+rewrite commits, or apply cleanup.
 To abandon instead, use `git cherry-pick --abort` and restore the generated
 backup. Never use this toolkit to push fork changes to `git-sync-toolkit`; git-sync-toolkit
 Never use this toolkit to push fork changes to `git-sync-toolkit`; git-sync-toolkit
