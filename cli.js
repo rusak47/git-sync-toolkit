@@ -368,6 +368,7 @@ async function cleanup() {
       if (commits.length === 1) {
         if (i === groupIndex) {
           if (commitIndex !== 0) throw new Error("Invalid cleanup continuation state");
+          if (git(["diff", "--cached", "--quiet"]) === "") continue;
           git(["commit", "-C", commits[0]]);
         } else {
           await writeCleanupProgress({

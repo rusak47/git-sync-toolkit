@@ -7,7 +7,7 @@ export const config = {
   stateDir: new URL("../../fork-sync-state/", import.meta.url),
   appliedState: new URL("../../fork-sync-state/applied.json", import.meta.url),
   cleanupProgress: new URL("../../fork-sync-state/cleanup-progress.json", import.meta.url),
-  validationCommands: [["node", ["--test", ".docs/scripts/upstream/test/*.js"]]],
+  validationCommands: [["node", ["--test", new URL("./test/*.js", import.meta.url).pathname]]],
   forkOwned: [".docs/**", "open-sse/utils/**", "src/lib/db/migrations/**"],
   hotFiles: ["open-sse/handlers/chatCore.js", "open-sse/executors/opencode.js"],
 };
