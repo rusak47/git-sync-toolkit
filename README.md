@@ -179,6 +179,12 @@ again, and pushes with `--force-with-lease`. If someone changes
 `origin/master` or the local result in between, publishing is rejected. It
 rejects `upstream`; use `--skip-validation` only when explicitly necessary.
 
+The reference recipe `recipes/worktree-to-origin.sh` shows the safe
+worktree-to-fork workflow: select the worktree, verify the branch is clean,
+run `publish --validate`, review the captured state, then enable and run
+`publish --apply`. The apply step is intentionally commented out in the
+recipe and must be enabled after review.
+
 `--generate` preserves every commit initially, includes each commit subject,
 and leaves `reason` as `null`. Edit the local plan before applying it: move a
 wrongly suggested drop entry into `replay`, add a reason, or group commits
