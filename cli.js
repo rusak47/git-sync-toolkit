@@ -346,11 +346,23 @@ async function cleanup() {
       const group = replay[i];
       const commits = group.commits.map(commit => ref(commit, "cleanup commit"));
       if (commits.length === 1) {
-        if (i !== groupIndex || commitIndex !== 0) throw new Error("Invalid cleanup continuation state");
-        git(["commit", "-C", commits[0]]);
+        if (i === groupIndex) {
+          if (commitIndex !== 0) throw new Error("Invalid cleanup continuation state");
+          git(["commit", "-C", commits[0]]);
+        } else {
+          await writeCleanupProgress({
+            branch: git(["branch", "--show-current"]) || config.baseBranch,
+            plan: a.plan,
+            groupIndex: i,
+            commitIndex: 0,
+            commit: commits[0],
+          });
+          git(["cherry-pick", commits[0]]);
+        }
         continue;
       }
       const start = i === groupIndex ? commitIndex + 1 : 0;
+      if (start >= commits.length) continue;
       for (const [offset, commit] of commits.slice(start).entries()) {
         await writeCleanupProgress({
           branch: git(["branch", "--show-current"]) || config.baseBranch,
