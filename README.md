@@ -174,6 +174,26 @@ Cleanup plans are tied to the pre-rewrite commit graph and are not reusable
 after the cleanup has been applied. To repeat or review the operation, restore
 the pre-cleanup backup first, then generate a new plan for that branch.
 
+For a correction that must take effect at an earlier replay point, add a
+`fixups` entry to the plan instead of replaying a distant corrective commit:
+
+```json
+{
+  "fixups": [
+    {
+      "after": "539732ff",
+      "patch": ".docs/fork-sync-state/null-byte-fix.patch",
+      "reason": "restore the actual null byte at the original fix position"
+    }
+  ]
+}
+```
+
+The patch is applied immediately after the referenced commit, before the next
+commit or squash completion. This preserves historical ordering and allows the
+later corrective commit to be omitted from replay. Patch paths are resolved
+relative to the command's launch directory.
+
 To change a classification without editing JSON manually, preview the
 modification first and add `--apply` to write it:
 
