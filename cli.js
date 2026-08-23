@@ -448,7 +448,6 @@ async function cleanup() {
     if (a["auto-accept-incoming"]) autoAcceptIncoming();
     try { git(["cherry-pick", "--quit"]); } catch {}
     const replay = plan.replay || [];
-    const fixups = plan.fixups || [];
     for (let i = groupIndex; i < replay.length; i++) {
       const group = replay[i];
       const commits = group.commits.map(commit => ref(commit, "cleanup commit"));
@@ -456,7 +455,7 @@ async function cleanup() {
         if (i === groupIndex) {
           if (commitIndex !== 0) throw new Error("Invalid cleanup continuation state");
           if (git(["diff", "--cached", "--quiet"]) === "") continue;
-          applyFixups(commits[0], plan.fixups);
+          applyFixups(commits[0], group.fixups);
           git(["commit", "-C", commits[0]]);
         } else {
           await writeCleanupProgress({
@@ -467,7 +466,7 @@ async function cleanup() {
             commit: commits[0],
           });
           cherryPick(commits[0], false, a["auto-accept-incoming"]);
-          applyFixups(commits[0], plan.fixups, true);
+          applyFixups(commits[0], group.fixups, true);
         }
         continue;
       }
@@ -482,7 +481,7 @@ async function cleanup() {
           commit,
         });
         cherryPick(commit, true, a["auto-accept-incoming"]);
-        applyFixups(commit, plan.fixups);
+        applyFixups(commit, group.fixups);
       }
       if (!group.subject) throw new Error("Squash group requires a subject");
       git(["commit", "-m", group.subject]);
@@ -533,12 +532,12 @@ async function cleanup() {
       reason: group.reason || (group.commits.length > 1
         ? "squash iterative commits into one logical change"
         : "preserve unique local change"),
-    })),
-    fixups: (plan.fixups || []).map(fixup => ({
-      after: ref(fixup.after, "fixup commit"),
-      patch: fixup.patch || null,
-      manual: fixup.manual || null,
-      reason: fixup.reason || null,
+      fixups: (group.fixups || []).map(fixup => ({
+        after: ref(fixup.after, "fixup commit"),
+        patch: fixup.patch || null,
+        manual: fixup.manual || null,
+        reason: fixup.reason || null,
+      })),
     })),
   };
   output(report);
@@ -555,13 +554,13 @@ async function cleanup() {
     if (commits.length === 1) {
       await writeCleanupProgress({ branch, plan: a.plan, groupIndex: replay.indexOf(group), commitIndex: 0, commit: commits[0] });
       cherryPick(commits[0], false, a["auto-accept-incoming"]);
-      applyFixups(commits[0], fixups, true);
+      applyFixups(commits[0], group.fixups, true);
       continue;
     }
     for (const [commitIndex, commit] of commits.entries()) {
       await writeCleanupProgress({ branch, plan: a.plan, groupIndex: replay.indexOf(group), commitIndex, commit });
       cherryPick(commit, true, a["auto-accept-incoming"]);
-      applyFixups(commit, fixups);
+      applyFixups(commit, group.fixups);
     }
     if (!group.subject) throw new Error("Squash group requires a subject");
     git(["commit", "-m", group.subject]);

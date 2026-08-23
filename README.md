@@ -175,17 +175,17 @@ after the cleanup has been applied. To repeat or review the operation, restore
 the pre-cleanup backup first, then generate a new plan for that branch.
 
 For a correction that must take effect at an earlier replay point, add a
-`fixups` entry to the plan instead of replaying a distant corrective commit:
+`fixups` entry to the relevant replay group instead of replaying a distant
+corrective commit:
 
 ```json
 {
-  "fixups": [
-    {
-      "after": "539732ff",
-      "patch": ".docs/fork-sync-state/null-byte-fix.patch",
-      "reason": "restore the actual null byte at the original fix position"
-    }
-  ]
+  "commits": ["ca86107b", "539732ff", "..."],
+  "fixups": [{
+    "after": "539732ff",
+    "patch": ".docs/fork-sync-state/null-byte-fix.patch",
+    "reason": "restore the actual null byte at the original fix position"
+  }]
 }
 ```
 
