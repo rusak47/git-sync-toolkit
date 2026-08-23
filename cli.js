@@ -522,7 +522,7 @@ async function cleanup() {
     }
     for (const [commitIndex, commit] of commits.entries()) {
       await writeCleanupProgress({ branch, plan: a.plan, groupIndex: replay.indexOf(group), commitIndex, commit });
-      git(["cherry-pick", "--no-commit", commit]);
+      cherryPick(commit, true, a["auto-accept-incoming"]);
     }
     if (!group.subject) throw new Error("Squash group requires a subject");
     git(["commit", "-m", group.subject]);
