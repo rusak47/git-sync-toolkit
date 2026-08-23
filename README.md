@@ -208,6 +208,19 @@ node cli.js cleanup --plan path/to/plan.json --rebind --apply
 
 Rebinding changes only the plan metadata; it does not switch branches or
 rewrite commits.
+
+The target worktree can also be selected explicitly when invoking the toolkit
+from another directory:
+
+```sh
+node /path/to/git-sync-toolkit/cli.js cleanup \
+  --worktree /path/to/repository/worktrees/feature \
+  --plan /path/to/plan.json
+```
+
+`--worktree` changes the Git working directory used by the operation; it does
+not rebind the plan. The plan branch must still match the branch checked out
+there.
 To abandon instead, use `git cherry-pick --abort` and restore the generated
 backup. Never use this toolkit to push fork changes to `git-sync-toolkit`; git-sync-toolkit
 Never use this toolkit to push fork changes to `git-sync-toolkit`; git-sync-toolkit

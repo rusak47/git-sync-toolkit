@@ -5,6 +5,10 @@ import { dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 
 const a = parseArgs(process.argv.slice(2)), command = a._[0] || "analyze";
+if (a.worktree) {
+  try { process.chdir(a.worktree); }
+  catch (error) { throw new Error(`Cannot use worktree ${a.worktree}: ${error.message}`); }
+}
 const target = a._[1] || `${config.upstreamRemote}/${config.baseBranch}`;
 const apply = a.apply === true || a.apply === "true";
 const json = a.json === true;
@@ -368,7 +372,7 @@ async function cleanup() {
     return;
   }
   if (plan.branch && plan.branch !== branch) {
-    throw new Error(`Cleanup plan branch ${plan.branch} does not match current branch ${branch || "(detached)"} in ${worktree}; use --rebind --apply intentionally`);
+    throw new Error(`Cleanup plan branch ${plan.branch} does not match current branch ${branch || "(detached)"} in ${worktree}; if this target branch is correct, run from that worktree or use --worktree <path>; otherwise use --rebind --apply intentionally`);
   }
   if (a.continue) {
     let progress;
