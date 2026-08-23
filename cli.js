@@ -235,6 +235,24 @@ async function backup() {
   output(backups);
 }
 async function cleanup() {
+  if (a.truncate) {
+    const base = ref(a.base, "truncate base");
+    const branch = git(["branch", "--show-current"]);
+    if (!branch) throw new Error("Refusing to truncate a detached HEAD");
+    const current = ref("HEAD", "current HEAD");
+    const report = { dryRun: !apply, action: "truncate", branch, current, base };
+    output(report);
+    if (!apply) return;
+    requireClean(true);
+    const backup = `backup/${(branch || config.baseBranch).replace(/[^A-Za-z0-9._-]/g, "-")}-${Date.now()}`;
+    git(["branch", backup, "HEAD"]);
+    git(["reset", "--hard", base]);
+    validate();
+    await recordAppliedState(config.originRemote, branch || config.baseBranch, remoteTip(config.originRemote, branch || config.baseBranch));
+    await clearCleanupProgress();
+    output({ ...report, dryRun: false, applied: true, backup, result: ref("HEAD", "truncated HEAD") });
+    return;
+  }
   if (a.modify) {
     if (!a.plan) throw new Error("--modify requires --plan <file>");
     if (a["move-before"]) {

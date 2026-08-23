@@ -85,6 +85,18 @@ repository by setting `SYNC_VALIDATION_COMMANDS` to a JSON array of
 <command>node .docs/scripts/upstream/cli.js cleanup --plan .docs/fork-sync-state/my-branch-cleanup.json --apply</command>
 </example>
 
+When every commit after a known base should be removed, use the simpler
+contiguous-history operation instead of generating a plan:
+
+<example>
+<command>node .docs/scripts/upstream/cli.js cleanup --truncate --base af61c3a7 --json</command>
+<command>node .docs/scripts/upstream/cli.js cleanup --truncate --base af61c3a7 --apply --skip-validation</command>
+</example>
+
+`--truncate` creates a `backup/*` ref before resetting the current branch to
+the base. It is intended for removing a complete trailing stack, not for
+selective cleanup.
+
 ### Restore a worktree backup
 
 <example>
