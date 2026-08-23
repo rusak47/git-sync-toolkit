@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs, git, gitLines, ref, range, ancestor, mergeBase, patchIds, loadLedger, saveLedger, requireClean, assertPushRemote, assertValidatedState, commitSummary, config } from "./lib.js";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -23,6 +23,13 @@ async function recordAppliedState(remote, branch, expectedRemote) {
     expectedRemote,
     validatedHead: ref("HEAD", "validated HEAD"),
   }, null, 2)}\n`);
+}
+async function writeCleanupProgress(data) {
+  await mkdir(config.stateDir, { recursive: true });
+  await writeFile(config.cleanupProgress, `${JSON.stringify(data, null, 2)}\n`);
+}
+async function clearCleanupProgress() {
+  try { await unlink(config.cleanupProgress); } catch (e) { if (e.code !== "ENOENT") throw e; }
 }
 function remoteTip(remote, branch) {
   return git(["ls-remote", remote, `refs/heads/${branch}`]).split(/\s+/)[0] || "";
@@ -311,16 +318,29 @@ async function cleanup() {
   if (!a.plan) throw new Error("cleanup requires --plan <file> (or --generate <file>)");
   const plan = JSON.parse(await readFile(a.plan, "utf8"));
   if (a.continue) {
-    const cherryPick = ref("CHERRY_PICK_HEAD", "interrupted cherry-pick");
+    let progress;
+    try { progress = JSON.parse(await readFile(config.cleanupProgress, "utf8")); }
+    catch (e) {
+      if (e.code !== "ENOENT") throw e;
+      const cherryPick = ref("CHERRY_PICK_HEAD", "interrupted cherry-pick");
+      progress = { groupIndex: (plan.replay || []).findIndex(group => group.commits.includes(cherryPick)), commitIndex: 0, commit: cherryPick };
+    }
+    const groupIndex = progress.groupIndex;
+    const commitIndex = progress.commitIndex;
+    const cherryPick = progress.commit;
+    if (progress.plan && progress.plan !== a.plan) {
+      throw new Error("Cleanup progress belongs to a different plan");
+    }
+    if (!Number.isInteger(groupIndex) || !Number.isInteger(commitIndex) || !cherryPick) {
+      throw new Error("Cleanup progress is invalid");
+    }
     if (git(["diff", "--name-only", "--diff-filter=U"])) {
       throw new Error("Resolve and stage all conflicts before cleanup --continue");
     }
-    const groupIndex = (plan.replay || []).findIndex(group => group.commits.includes(cherryPick));
-    const commitIndex = groupIndex < 0 ? -1 : plan.replay[groupIndex].commits.indexOf(cherryPick);
-    if (groupIndex < 0 || commitIndex < 0) {
+    if (groupIndex < 0 || !plan.replay[groupIndex] || plan.replay[groupIndex].commits[commitIndex] !== cherryPick) {
       throw new Error("Interrupted cherry-pick is not in the cleanup plan");
     }
-    git(["cherry-pick", "--quit"]);
+    try { git(["cherry-pick", "--quit"]); } catch {}
     const replay = plan.replay || [];
     for (let i = groupIndex; i < replay.length; i++) {
       const group = replay[i];
@@ -338,6 +358,7 @@ async function cleanup() {
     validate();
     const branch = git(["branch", "--show-current"]) || config.baseBranch;
     await recordAppliedState(config.originRemote, branch, remoteTip(config.originRemote, branch));
+    await clearCleanupProgress();
     output({ continued: true, branch, validatedHead: ref("HEAD", "validated HEAD") });
     return;
   }
@@ -385,15 +406,20 @@ async function cleanup() {
   for (const group of replay) {
     const commits = group.commits.map(commit => ref(commit, "cleanup commit"));
     if (commits.length === 1) {
+      await writeCleanupProgress({ branch, plan: a.plan, groupIndex: replay.indexOf(group), commitIndex: 0, commit: commits[0] });
       git(["cherry-pick", commits[0]]);
       continue;
     }
-    for (const commit of commits) git(["cherry-pick", "--no-commit", commit]);
+    for (const [commitIndex, commit] of commits.entries()) {
+      await writeCleanupProgress({ branch, plan: a.plan, groupIndex: replay.indexOf(group), commitIndex, commit });
+      git(["cherry-pick", "--no-commit", commit]);
+    }
     if (!group.subject) throw new Error("Squash group requires a subject");
     git(["commit", "-m", group.subject]);
   }
   validate();
   await recordAppliedState(config.originRemote, branch, expectedRemote);
+  await clearCleanupProgress();
 }
 async function publish() {
   if (a.validate) {

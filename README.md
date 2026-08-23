@@ -142,8 +142,10 @@ stops on a conflict, resolve and stage the files, then resume the plan:
 <command>node .docs/scripts/upstream/cli.js cleanup --plan .docs/fork-sync-state/my-branch-cleanup.json --continue</command>
 </example>
 
-`cleanup --continue` preserves the staged resolution for the interrupted
-`--no-commit` cherry-pick and resumes the remaining group and later groups.
+Cleanup persists its current plan position before each cherry-pick.
+`cleanup --continue` uses that progress record, preserves the staged resolution
+for the interrupted `--no-commit` cherry-pick, and resumes the remaining group
+and later groups even when `CHERRY_PICK_HEAD` is unavailable.
 To abandon instead, use `git cherry-pick --abort` and restore the generated
 backup. Never use this toolkit to push fork changes to `upstream`; upstream
 Never use this toolkit to push fork changes to `upstream`; upstream
