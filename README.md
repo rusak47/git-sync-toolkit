@@ -16,6 +16,26 @@ Refs are resolved as immutable commits and ancestry is checked before rebasing.
 The ledger is schema-versioned and written atomically. Keep `.docs/scripts/samples`
 ignored: it is reference material, not executable toolkit code.
 
+## Repository configuration
+
+The toolkit is repository-agnostic. Defaults are `origin`, `upstream`, and
+`master`; override them without editing the toolkit:
+
+<example>
+<command>SYNC_ORIGIN_REMOTE=fork SYNC_UPSTREAM_REMOTE=source SYNC_BASE_BRANCH=main node .docs/scripts/upstream/cli.js refresh --remoteRef fork/main</command>
+</example>
+
+Repository-specific ownership and risk settings use JSON-array environment
+variables:
+
+<example>
+<command>SYNC_FORK_OWNED='["docs/**","vendor/**"]' SYNC_HOT_FILES='["src/core.js"]' node .docs/scripts/upstream/cli.js analyze upstream/main --json</command>
+</example>
+
+Validation defaults to the toolkit's own tests. Replace it for a host
+repository by setting `SYNC_VALIDATION_COMMANDS` to a JSON array of
+`[command,args]` pairs.
+
 ## Examples
 
 ### Inspect and classify changes
