@@ -170,6 +170,9 @@ and leaves `reason` as `null`. Edit the local plan before applying it: move a
 wrongly suggested drop entry into `replay`, add a reason, or group commits
 under `subject` to squash them. The toolkit never treats a commit as
 disposable solely because its subject contains `debug`, `test`, or `fix`.
+Cleanup plans are tied to the pre-rewrite commit graph and are not reusable
+after the cleanup has been applied. To repeat or review the operation, restore
+the pre-cleanup backup first, then generate a new plan for that branch.
 
 To change a classification without editing JSON manually, preview the
 modification first and add `--apply` to write it:

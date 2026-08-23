@@ -485,7 +485,13 @@ async function cleanup() {
   if (new Set(allPlanned).size !== allPlanned.length) throw new Error("Cleanup plan contains duplicate commits");
   for (const commit of allPlanned) {
     const sha = ref(commit, "cleanup commit");
-    if (!local.has(sha)) throw new Error(`Cleanup commit is not on the selected branch: ${commit}`);
+    if (!local.has(sha)) {
+      throw new Error([
+        `Cleanup commit is not on the selected branch: ${commit}`,
+        "The plan may already have been applied or the branch may have been reset;",
+        "restore the pre-cleanup backup and regenerate the plan for this branch.",
+      ].join("\n"));
+    }
   }
   if (allPlanned.length !== local.size) throw new Error("Cleanup plan must classify every local commit");
   const report = {
