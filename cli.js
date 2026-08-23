@@ -81,7 +81,17 @@ function applyFixups(commit, fixups, amend = false) {
   for (const fixup of fixupsFor(commit, fixups)) {
     if (fixup.patch) {
       const patch = isAbsolute(fixup.patch) ? fixup.patch : resolve(invocationCwd, fixup.patch);
-      git(["apply", "--index", "--", patch]);
+      try {
+        git(["apply", "--index", "--", patch]);
+      } catch (error) {
+        throw new Error([
+          `Cleanup fixup failed after ${commit}: ${patch}`,
+          "The cleanup is paused at this commit.",
+          "Fix the patch manually and stage the result, then run cleanup --continue;",
+          "or run cleanup --continue without staging it to skip this fixup.",
+          error.message,
+        ].join("\n"));
+      }
     }
     if (fixup.manual) {
       throw new Error(`Manual cleanup fix required after ${commit}: ${fixup.manual}`);
