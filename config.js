@@ -15,6 +15,7 @@ export const config = {
   stateDir: new URL("../../fork-sync-state/", import.meta.url),
   appliedState: new URL("../../fork-sync-state/applied.json", import.meta.url),
   cleanupProgress: new URL("../../fork-sync-state/cleanup-progress.json", import.meta.url),
+  refreshProgress: new URL("../../fork-sync-state/refresh-progress.json", import.meta.url),
   validationCommands: list("SYNC_VALIDATION_COMMANDS", defaultValidation),
   forkOwned: list("SYNC_FORK_OWNED", []),
   hotFiles: list("SYNC_HOT_FILES", []),

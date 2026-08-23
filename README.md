@@ -68,7 +68,21 @@ export const config = {
 <example>
 <command>node .docs/scripts/git-sync-toolkit/cli.js refresh</command>
 <command>node .docs/scripts/git-sync-toolkit/cli.js refresh --remoteRef origin/master --apply</command>
+<command>node .docs/scripts/git-sync-toolkit/cli.js refresh --remoteRef origin/master --apply --auto-accept-incoming</command>
 </example>
+
+Refresh persists its replay position before each cherry-pick. If an apply
+stops on a conflict, resolve and stage the files, then resume with:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js refresh \
+  --remoteRef origin/master \
+  --continue
+```
+
+Use `--continue --auto-accept-incoming` to choose the incoming version for
+unresolved paths before continuing. Refresh progress is separate from cleanup
+progress.
 
 ### Land a feature branch into fork origin
 

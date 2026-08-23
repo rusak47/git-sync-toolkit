@@ -52,6 +52,9 @@ async function writeCleanupProgress(data) {
 async function clearCleanupProgress() {
   try { await unlink(config.cleanupProgress); } catch (e) { if (e.code !== "ENOENT") throw e; }
 }
+async function clearRefreshProgress() {
+  try { await unlink(config.refreshProgress); } catch (e) { if (e.code !== "ENOENT") throw e; }
+}
 function remoteTip(remote, branch) {
   return git(["ls-remote", remote, `refs/heads/${branch}`]).split(/\s+/)[0] || "";
 }
@@ -135,6 +138,25 @@ async function landed() {
   output(local.map(sha => ({ sha, subject: commitSummary(sha), landed: upIds.has(patchIds([sha]).get(sha)) })));
 }
 async function refresh() {
+  if (a.continue) {
+    let progress;
+    try { progress = JSON.parse(await readFile(config.refreshProgress, "utf8")); }
+    catch (e) { if (e.code === "ENOENT") throw new Error("No interrupted refresh progress found"); throw e; }
+    if (progress.plan && progress.plan !== a.remoteRef) throw new Error("Refresh progress belongs to a different remote reference");
+    let interrupted = false;
+    try { ref("CHERRY_PICK_HEAD", "interrupted refresh"); interrupted = true; } catch {}
+    if (interrupted && a["auto-accept-incoming"]) autoAcceptIncoming();
+    try { git(["cherry-pick", "--continue"]); } catch (error) {
+      throw new Error(`Refresh continuation requires resolved and staged conflicts: ${error.message}`);
+    }
+    for (const [index, commit] of progress.kept.slice(progress.index + 1).entries()) {
+      await writeFile(config.refreshProgress, `${JSON.stringify({ plan: progress.plan, kept: progress.kept, index: progress.index + 1 + index }, null, 2)}\n`);
+      cherryPick(commit, false, a["auto-accept-incoming"]);
+    }
+    await clearRefreshProgress();
+    output({ continued: true, branch: git(["branch", "--show-current"]), applied: progress.kept.length - progress.index });
+    return;
+  }
   const branch = git(["branch", "--show-current"]);
   const remoteRef = a.remoteRef || `${config.originRemote}/${branch || config.baseBranch}`;
   if (apply) { requireClean(true); git(["fetch", "--prune", "--", config.originRemote]); }
@@ -188,7 +210,11 @@ async function refresh() {
     return;
   }
   git(["reset", "--keep", fetched]);
-  for (const commit of kept) git(["cherry-pick", commit]);
+  for (const [index, commit] of kept.entries()) {
+    await writeFile(config.refreshProgress, `${JSON.stringify({ plan: a.remoteRef || remoteRef, kept, index }, null, 2)}\n`);
+    cherryPick(commit, false, a["auto-accept-incoming"]);
+  }
+  await clearRefreshProgress();
 }
 async function sync() {
   if (apply) {
