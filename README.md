@@ -146,6 +146,9 @@ Cleanup persists its current plan position before each cherry-pick.
 `cleanup --continue` uses that progress record, preserves the staged resolution
 for the interrupted `--no-commit` cherry-pick, and resumes the remaining group
 and later groups even when `CHERRY_PICK_HEAD` is unavailable.
+If incoming changes should always win, add `--auto-accept-incoming` to both the
+initial cleanup command and any continuation command. This selects `theirs`
+for every conflicted path and stages the result; review the resulting diff.
 To abandon instead, use `git cherry-pick --abort` and restore the generated
 backup. Never use this toolkit to push fork changes to `upstream`; upstream
 Never use this toolkit to push fork changes to `upstream`; upstream

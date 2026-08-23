@@ -34,6 +34,25 @@ async function clearCleanupProgress() {
 function remoteTip(remote, branch) {
   return git(["ls-remote", remote, `refs/heads/${branch}`]).split(/\s+/)[0] || "";
 }
+function autoAcceptIncoming() {
+  const paths = gitLines(["diff", "--name-only", "--diff-filter=U"]);
+  if (!paths.length) return false;
+  git(["checkout", "--theirs", "--", ...paths]);
+  git(["add", "--", ...paths]);
+  return true;
+}
+function cherryPick(commit, noCommit, autoAccept) {
+  try {
+    git(noCommit ? ["cherry-pick", "--no-commit", commit] : ["cherry-pick", commit]);
+  } catch (error) {
+    if (!autoAccept || !autoAcceptIncoming()) throw error;
+    if (noCommit) {
+      try { git(["cherry-pick", "--quit"]); } catch {}
+    } else {
+      git(["cherry-pick", "--continue"]);
+    }
+  }
+}
 
 async function analyze() {
   const upstream = ref(target, "upstream target"), base = ref(`HEAD`, "HEAD");
@@ -334,12 +353,13 @@ async function cleanup() {
     if (!Number.isInteger(groupIndex) || !Number.isInteger(commitIndex) || !cherryPick) {
       throw new Error("Cleanup progress is invalid");
     }
-    if (git(["diff", "--name-only", "--diff-filter=U"])) {
+    if (git(["diff", "--name-only", "--diff-filter=U"]) && !a["auto-accept-incoming"]) {
       throw new Error("Resolve and stage all conflicts before cleanup --continue");
     }
     if (groupIndex < 0 || !plan.replay[groupIndex] || plan.replay[groupIndex].commits[commitIndex] !== cherryPick) {
       throw new Error("Interrupted cherry-pick is not in the cleanup plan");
     }
+    if (a["auto-accept-incoming"]) autoAcceptIncoming();
     try { git(["cherry-pick", "--quit"]); } catch {}
     const replay = plan.replay || [];
     for (let i = groupIndex; i < replay.length; i++) {
@@ -357,7 +377,7 @@ async function cleanup() {
             commitIndex: 0,
             commit: commits[0],
           });
-          git(["cherry-pick", commits[0]]);
+          cherryPick(commits[0], false, a["auto-accept-incoming"]);
         }
         continue;
       }
@@ -371,7 +391,7 @@ async function cleanup() {
           commitIndex: start + offset,
           commit,
         });
-        git(["cherry-pick", "--no-commit", commit]);
+        cherryPick(commit, true, a["auto-accept-incoming"]);
       }
       if (!group.subject) throw new Error("Squash group requires a subject");
       git(["commit", "-m", group.subject]);
@@ -428,7 +448,7 @@ async function cleanup() {
     const commits = group.commits.map(commit => ref(commit, "cleanup commit"));
     if (commits.length === 1) {
       await writeCleanupProgress({ branch, plan: a.plan, groupIndex: replay.indexOf(group), commitIndex: 0, commit: commits[0] });
-      git(["cherry-pick", commits[0]]);
+      cherryPick(commits[0], false, a["auto-accept-incoming"]);
       continue;
     }
     for (const [commitIndex, commit] of commits.entries()) {
