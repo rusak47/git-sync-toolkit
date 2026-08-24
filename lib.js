@@ -64,8 +64,15 @@ export async function saveLedger(data) {
 }
 export function parseArgs(argv) {
   const out = { _: [] };
+  const short = { s: "source", t: "target", w: "worktree" };
   for (let i = 0; i < argv.length; i++) {
-    const x = argv[i]; if (!x.startsWith("--")) { out._.push(x); continue; }
+    const x = argv[i]; if (!x.startsWith("-")) { out._.push(x); continue; }
+    if (x.startsWith("-") && !x.startsWith("--")) {
+      const key = short[x.slice(1)];
+      if (!key) throw new Error(`Unknown option: ${x}`);
+      out[key] = argv[i + 1]?.startsWith("-") ? true : argv[++i] ?? true;
+      continue;
+    }
     const [k, v] = x.slice(2).split("=", 2);
     out[k] = v ?? (argv[i + 1]?.startsWith("--") ? true : argv[++i] ?? true);
   }

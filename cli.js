@@ -3,13 +3,16 @@ import { parseArgs, git, gitLines, ref, range, ancestor, mergeBase, patchIds, lo
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { join, dirname as pathDirname } from "node:path";
+import { createInterface } from "node:readline/promises";
+import { stdin as input, stdout as outputStream } from "node:process";
 
 const a = parseArgs(process.argv.slice(2)), command = a._[0] || "analyze";
 const invocationCwd = process.cwd();
 for (const option of ["plan", "generate"]) {
   if (a[option] && !isAbsolute(a[option])) a[option] = resolve(invocationCwd, a[option]);
 }
-if (a.worktree) {
+if (a.worktree && command !== "copy") {
   let selected = a.worktree;
   const lines = git(["worktree", "list", "--porcelain"]).split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -109,6 +112,40 @@ async function analyze() {
   const files = gitLines(["diff", "--name-only", `${upstream}...HEAD`]);
   const result = { target, upstream, commits, files, hotFiles: files.filter(f => config.hotFiles.includes(f)), clean: clean() };
   output(result);
+}
+async function copy() {
+  const source = a.source || a._[1];
+  const targetBranch = a.target || a._[2];
+  if (!source || !targetBranch) throw new Error("copy requires --source <branch> and --target <branch>");
+  if (!/^[A-Za-z0-9._/-]+$/.test(targetBranch) || targetBranch.startsWith("/") || targetBranch.endsWith("/")) {
+    throw new Error("Invalid target branch");
+  }
+  const sourceSha = ref(source, "source branch");
+  try {
+    git(["show-ref", "--verify", "--quiet", `refs/heads/${targetBranch}`]);
+    throw new Error(`Target branch already exists: ${targetBranch}`);
+  } catch (error) {
+    if (error.message.startsWith("Target branch already exists")) throw error;
+  }
+  const repoRoot = git(["rev-parse", "--show-toplevel"]);
+  const worktrees = git(["worktree", "list", "--porcelain"]).split("\n")
+    .filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
+  let root = a.worktree && resolve(invocationCwd, a.worktree);
+  if (!root && worktrees.length > 1) {
+    const guessed = pathDirname(worktrees[1]);
+    if (!json && input.isTTY && outputStream.isTTY) {
+      const rl = createInterface({ input, output: outputStream });
+      const answer = await rl.question(`Guessed worktrees root "${guessed}". Use it? [Y/n] `);
+      if (!answer.trim() || /^y(es)?$/i.test(answer.trim())) root = guessed;
+      else root = (await rl.question("Enter worktrees root path: ")).trim();
+      rl.close();
+    } else root = guessed;
+  }
+  if (!root) root = join(repoRoot, "worktrees");
+  const destination = join(root, targetBranch);
+  await mkdir(destination, { recursive: true });
+  git(["worktree", "add", "-b", targetBranch, destination, sourceSha]);
+  output({ copied: true, source, sourceSha, target: targetBranch, worktree: destination });
 }
 function clean() { try { return git(["status", "--porcelain"]) === ""; } catch { return false; } }
 async function classify() {
@@ -631,6 +668,6 @@ async function publish() {
   validate();
   git(["push", `--force-with-lease=refs/heads/${branch}:${state.expectedRemote}`, remote, `HEAD:refs/heads/${branch}`]);
 }
-const commands = { analyze, classify, land, landed, refresh, sync, adopt, restore, backup, publish, cleanup, "reset-candidates": resetCandidates };
+const commands = { analyze, classify, copy, land, landed, refresh, sync, adopt, restore, backup, publish, cleanup, "reset-candidates": resetCandidates };
 try { if (!commands[command]) throw new Error(`Unknown operation: ${command}`); await commands[command](); }
 catch (e) { console.error(`upstream toolkit: ${e.message}`); process.exitCode = 1; }

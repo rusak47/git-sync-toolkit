@@ -54,6 +54,24 @@ export const config = {
 
 ## Examples
 
+### Copy a branch to a new worktree
+
+Create a new branch and worktree from an existing source branch:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js copy \
+  --source feature/my-work \
+  --target test/my-work \
+  --worktree /tmp/9router/worktrees
+```
+
+Short options are also supported: `-s`, `-t`, and `-w`. The target worktree
+path is `<worktrees-root>/<target-branch>`. If `--worktree` is omitted and
+existing worktrees provide a likely common root, the toolkit asks for
+confirmation before using it; otherwise it uses `<repository>/worktrees`.
+The source must resolve to a commit and the target branch must not already
+exist.
+
 ### Inspect and classify changes
 
 <example>
