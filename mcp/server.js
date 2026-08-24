@@ -201,6 +201,10 @@ async function runGit(args) {
   let stdout = "", stderr = "";
   for await (const chunk of child.stdout) stdout += chunk;
   for await (const chunk of child.stderr) stderr += chunk;
+  await new Promise((resolvePromise, reject) => {
+    child.once("error", reject);
+    child.once("close", resolvePromise);
+  });
   if (child.exitCode !== 0) throw new Error(stderr.trim() || `git exited with ${child.exitCode}`);
   return stdout;
 }

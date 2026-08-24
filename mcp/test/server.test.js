@@ -42,6 +42,12 @@ test("stdio server discovers tools and confirms a copy operation", async t => {
   const listed = await client.listTools();
   assert.equal(listed.tools.length, 10);
   assert.ok(listed.tools.some(tool => tool.name === "sync_copy_worktree"));
+  const worktrees = jsonResult(await client.callTool({
+    name: "sync_list_worktrees",
+    arguments: {},
+  }));
+  assert.equal(worktrees.worktrees.length, 1);
+  assert.equal(worktrees.worktrees[0].branch, "master");
 
   const preview = jsonResult(await client.callTool({
     name: "sync_copy_worktree",
