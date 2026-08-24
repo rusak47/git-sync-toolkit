@@ -93,6 +93,23 @@ If the branch is checked out by a worktree, deletion stops unless
 supplied. `--apply` is required for removal; `--force` permits discarding
 uncommitted changes. An explicit worktree path is still accepted when needed.
 
+## MCP server
+
+The optional `mcp/` package exposes the toolkit over MCP stdio while keeping
+the terminal CLI unchanged. Install its dependencies and configure an MCP
+client to launch:
+
+```sh
+npm --prefix .docs/scripts/git-sync-toolkit/mcp install
+GIT_SYNC_REPO_ROOT=/path/to/repository \
+  node /path/to/git-sync-toolkit/mcp/server.js
+```
+
+The server provides structured tools for listing worktrees, analyzing,
+refreshing, cleanup, validation, and publishing. Mutating tools default to
+preview mode; pass their explicit `apply: true` argument only after reviewing
+the preview. `GIT_SYNC_MCP_TIMEOUT_MS` controls the subprocess timeout.
+
 ### Inspect and classify changes
 
 <example>
