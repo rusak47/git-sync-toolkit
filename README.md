@@ -80,18 +80,18 @@ Preview deletion:
 node .docs/scripts/git-sync-toolkit/cli.js delete --delete test/my-work
 ```
 
-Use `-D` as the short form and pass the worktree path to remove it together
-with the branch:
+Use `-D` as the short form and add `-w`/`--worktree` to automatically locate
+and remove the worktree associated with that branch:
 
 ```sh
 node .docs/scripts/git-sync-toolkit/cli.js -D test/my-work \
-  --worktree /tmp/9router/worktrees/test/my-work --apply
+  --worktree --apply
 ```
 
 If the branch is checked out by a worktree, deletion stops unless
-`--worktree <path>` identifies that worktree. Dirty worktrees also stop unless
-`--force` is supplied. `--apply` is required for removal; `--force` permits
-discarding uncommitted changes.
+`--worktree` is supplied. Dirty worktrees also stop unless `--force` is
+supplied. `--apply` is required for removal; `--force` permits discarding
+uncommitted changes. An explicit worktree path is still accepted when needed.
 
 ### Inspect and classify changes
 

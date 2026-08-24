@@ -159,9 +159,10 @@ async function deleteBranch() {
   const blocks = git(["worktree", "list", "--porcelain"]).split("\n\n").map(block => block.split("\n"));
   const attached = blocks.find(block => block.includes(`branch refs/heads/${branch}`));
   const attachedPath = attached?.find(line => line.startsWith("worktree "))?.slice("worktree ".length);
-  const selectedPath = a.worktree ? resolve(invocationCwd, a.worktree) : null;
-  if (attachedPath && !selectedPath) {
-    throw new Error(`Branch ${branch} is checked out at ${attachedPath}; remove that worktree first or pass --worktree <path>`);
+  const removeWorktree = Boolean(a.worktree);
+  const selectedPath = a.worktree && a.worktree !== true ? resolve(invocationCwd, a.worktree) : attachedPath;
+  if (attachedPath && !removeWorktree) {
+    throw new Error(`Branch ${branch} is checked out at ${attachedPath}; remove that worktree first or pass --worktree`);
   }
   if (selectedPath && attachedPath !== selectedPath) {
     throw new Error(`--worktree does not point to branch ${branch}; expected ${attachedPath || "(no attached worktree)"}`);
@@ -170,7 +171,7 @@ async function deleteBranch() {
   if (dirty && !a.force) {
     throw new Error(`Worktree ${attachedPath} has uncommitted changes; review them or add --force`);
   }
-  const result = { dryRun: !apply, branch, worktree: attachedPath || null, dirty, removeWorktree: Boolean(attachedPath) };
+  const result = { dryRun: !apply, branch, worktree: attachedPath || null, dirty, removeWorktree };
   output(result);
   if (!apply) return;
   if (attachedPath) git(["worktree", "remove", ...(a.force ? ["--force"] : []), "--", attachedPath]);
