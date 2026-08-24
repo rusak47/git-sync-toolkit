@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -10,6 +11,7 @@ const toolkitRoot = resolve(new URL("..", import.meta.url).pathname);
 const cli = resolve(toolkitRoot, "cli.js");
 const repoRoot = resolve(process.env.GIT_SYNC_REPO_ROOT || process.cwd());
 const timeoutMs = Number(process.env.GIT_SYNC_MCP_TIMEOUT_MS || 120000);
+const confirmations = new Map();
 
 const stringProperty = { type: "string", minLength: 1 };
 
@@ -36,8 +38,22 @@ function run(args, cwd = repoRoot) {
   });
 }
 
-function result(data) {
-  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+function result(data, confirmation) {
+  return { content: [{ type: "text", text: JSON.stringify(confirmation ? { ...data, confirmation } : data, null, 2) }] };
+}
+function requestKey(name, args) {
+  const copy = { ...args };
+  delete copy.apply;
+  delete copy.confirmation;
+  return JSON.stringify([name, copy]);
+}
+function mutating(name, args) {
+  return ["sync_refresh", "sync_cleanup", "sync_copy_worktree", "sync_delete_branch", "sync_restore_backup", "sync_publish"].includes(name) && args.apply === true;
+}
+function issueConfirmation(name, args, data) {
+  const token = randomBytes(18).toString("base64url");
+  confirmations.set(token, { key: requestKey(name, args), preview: data, expires: Date.now() + 10 * 60 * 1000 });
+  return token;
 }
 
 const tools = [
@@ -56,7 +72,7 @@ const tools = [
     description: "Preview or apply a worktree refresh from a remote ref. Apply requires explicit confirmation.",
     inputSchema: {
       type: "object",
-      properties: { remoteRef: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, autoAcceptIncoming: { type: "boolean" }, continue: { type: "boolean" } },
+      properties: { remoteRef: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty, autoAcceptIncoming: { type: "boolean" }, continue: { type: "boolean" } },
     },
   },
   {
@@ -65,7 +81,7 @@ const tools = [
     inputSchema: {
       type: "object",
       required: ["plan"],
-      properties: { plan: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, continue: { type: "boolean" }, autoAcceptIncoming: { type: "boolean" } },
+      properties: { plan: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty, continue: { type: "boolean" }, autoAcceptIncoming: { type: "boolean" } },
     },
   },
   {
@@ -76,17 +92,17 @@ const tools = [
   {
     name: "sync_publish",
     description: "Publish a previously validated branch. Requires explicit confirmation.",
-    inputSchema: { type: "object", properties: { branch: stringProperty, worktree: stringProperty, apply: { type: "boolean" } } },
+    inputSchema: { type: "object", properties: { branch: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty } },
   },
   {
     name: "sync_copy_worktree",
     description: "Preview or create a new branch and worktree from a source branch.",
-    inputSchema: { type: "object", required: ["source", "target"], properties: { source: stringProperty, target: stringProperty, worktree: stringProperty, apply: { type: "boolean" } } },
+    inputSchema: { type: "object", required: ["source", "target"], properties: { source: stringProperty, target: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty } },
   },
   {
     name: "sync_delete_branch",
     description: "Preview or delete a local branch, optionally removing its associated worktree.",
-    inputSchema: { type: "object", required: ["branch"], properties: { branch: stringProperty, worktree: { type: "boolean" }, force: { type: "boolean" }, apply: { type: "boolean" } } },
+    inputSchema: { type: "object", required: ["branch"], properties: { branch: stringProperty, worktree: { type: "boolean" }, force: { type: "boolean" }, apply: { type: "boolean" }, confirmation: stringProperty } },
   },
   {
     name: "sync_list_backups",
@@ -96,7 +112,7 @@ const tools = [
   {
     name: "sync_restore_backup",
     description: "Preview or restore a branch from a local recovery backup.",
-    inputSchema: { type: "object", required: ["backup"], properties: { backup: stringProperty, worktree: stringProperty, apply: { type: "boolean" } } },
+    inputSchema: { type: "object", required: ["backup"], properties: { backup: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty } },
   },
 ];
 
@@ -105,6 +121,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 server.setRequestHandler(CallToolRequestSchema, async request => {
   const args = request.params.arguments || {};
   try {
+    if (mutating(request.params.name, args)) {
+      const entry = confirmations.get(args.confirmation);
+      if (!entry || entry.expires < Date.now() || entry.key !== requestKey(request.params.name, args)) {
+        throw new Error("Invalid or expired confirmation; run the same operation in preview mode first");
+      }
+      confirmations.delete(args.confirmation);
+    }
     if (request.params.name === "sync_list_worktrees") {
       return result({ worktrees: parseWorktrees(await runGit(["worktree", "list", "--porcelain"])) });
     }
@@ -150,7 +173,11 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
       throw new Error(`Unknown tool: ${request.params.name}`);
     }
     if (args.worktree) cliArgs.push("--worktree", args.worktree);
-    return result(await run(cliArgs));
+    const data = await run(cliArgs);
+    if (["sync_refresh", "sync_cleanup", "sync_copy_worktree", "sync_delete_branch", "sync_restore_backup", "sync_publish"].includes(request.params.name) && !args.apply) {
+      return result(data, issueConfirmation(request.params.name, args, data));
+    }
+    return result(data);
   } catch (error) {
     return { isError: true, content: [{ type: "text", text: error.message }] };
   }

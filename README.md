@@ -109,8 +109,10 @@ GIT_SYNC_REPO_ROOT=/path/to/repository \
 
 The server provides structured tools for listing worktrees, analyzing,
 refreshing, cleanup, validation, and publishing. Mutating tools default to
-preview mode; pass their explicit `apply: true` argument only after reviewing
-the preview. `GIT_SYNC_MCP_TIMEOUT_MS` controls the subprocess timeout.
+preview mode and return a short-lived confirmation token. Pass that token with
+the identical request and `apply: true` only after reviewing the preview.
+Tokens are single-use and expire after ten minutes. `GIT_SYNC_MCP_TIMEOUT_MS`
+controls the subprocess timeout.
 
 ### Inspect and classify changes
 
