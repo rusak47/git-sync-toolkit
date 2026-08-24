@@ -103,9 +103,31 @@ client to launch:
 
 ```sh
 npm --prefix .docs/scripts/git-sync-toolkit/mcp install
-GIT_SYNC_REPO_ROOT=/path/to/repository \
-  node /path/to/git-sync-toolkit/mcp/server.js
 npm --prefix .docs/scripts/git-sync-toolkit/mcp test
+```
+
+Install the toolkit outside any project (for example under
+`~/.local/share/git-sync-toolkit`) and configure Kilo Code globally with the
+absolute path to `mcp/server.js`. The server uses the MCP process working
+directory as the repository by default, so the same installation works across
+projects and worktrees. Set `GIT_SYNC_REPO_ROOT` only when the MCP client
+cannot provide the project working directory or when intentionally targeting a
+fixed repository.
+
+```jsonc
+{
+  "mcp": {
+    "git-sync-toolkit": {
+      "type": "local",
+      "command": [
+        "node",
+        "/home/you/.local/share/git-sync-toolkit/mcp/server.js"
+      ],
+      "enabled": true,
+      "timeout": 120000
+    }
+  }
+}
 ```
 
 The server provides structured tools for listing worktrees, analyzing,

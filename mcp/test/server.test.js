@@ -33,7 +33,7 @@ test("stdio server discovers tools and confirms a copy operation", async t => {
     command: process.execPath,
     args: [server],
     cwd: repo,
-    env: { ...process.env, GIT_SYNC_REPO_ROOT: repo },
+    env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "GIT_SYNC_REPO_ROOT")),
   });
   const client = new Client({ name: "git-sync-toolkit-test", version: "1.0.0" }, { capabilities: {} });
   t.after(() => client.close());

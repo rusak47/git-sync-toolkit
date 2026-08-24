@@ -9,13 +9,16 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 
 const toolkitRoot = resolve(new URL("..", import.meta.url).pathname);
 const cli = resolve(toolkitRoot, "cli.js");
-const repoRoot = resolve(process.env.GIT_SYNC_REPO_ROOT || process.cwd());
 const timeoutMs = Number(process.env.GIT_SYNC_MCP_TIMEOUT_MS || 120000);
 const confirmations = new Map();
 
 const stringProperty = { type: "string", minLength: 1 };
 
-function run(args, cwd = repoRoot) {
+function repositoryRoot() {
+  return resolve(process.env.GIT_SYNC_REPO_ROOT || process.cwd());
+}
+
+function run(args, cwd = repositoryRoot()) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, [cli, ...args, "--json"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "";
@@ -194,7 +197,7 @@ function parseWorktrees(text) {
 }
 
 async function runGit(args) {
-  const child = spawn(process.env.GIT_BIN || "git", args, { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.env.GIT_BIN || "git", args, { cwd: repositoryRoot(), stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "", stderr = "";
   for await (const chunk of child.stdout) stdout += chunk;
   for await (const chunk of child.stderr) stderr += chunk;
