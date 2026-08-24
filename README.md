@@ -105,6 +105,7 @@ client to launch:
 npm --prefix .docs/scripts/git-sync-toolkit/mcp install
 GIT_SYNC_REPO_ROOT=/path/to/repository \
   node /path/to/git-sync-toolkit/mcp/server.js
+npm --prefix .docs/scripts/git-sync-toolkit/mcp test
 ```
 
 The server provides structured tools for listing worktrees, analyzing,

@@ -32,8 +32,8 @@ function run(args, cwd = repoRoot) {
         reject(new Error(stderr.trim() || stdout.trim() || `Toolkit command exited with ${code}`));
         return;
       }
-      try { resolvePromise(JSON.parse(stdout)); }
-      catch { reject(new Error("Toolkit returned invalid JSON")); }
+      try { resolvePromise(JSON.parse(stdout.trim().split(/\n(?=\{)/).at(-1))); }
+      catch { reject(new Error(`Toolkit returned invalid JSON: ${stdout.trim() || stderr.trim() || "empty output"}`)); }
     });
   });
 }

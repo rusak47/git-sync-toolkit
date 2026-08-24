@@ -2,8 +2,10 @@
   "name": "@rusak47/git-sync-toolkit-mcp",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.5",
-    "zod": "^3.25.76"
+    "@modelcontextprotocol/sdk": "^1.17.5"
   }
 }
