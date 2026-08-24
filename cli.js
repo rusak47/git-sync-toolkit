@@ -288,32 +288,39 @@ async function refresh() {
   await clearRefreshProgress();
 }
 async function sync() {
+  const ledger = await loadLedger();
   if (apply) {
     requireClean(true);
     git(["fetch", "--prune", "--", config.upstreamRemote]);
     git(["fetch", "--prune", "--", config.originRemote]);
   }
   const upstream = ref(a.target || target, "pinned upstream target");
-  const head = ref("HEAD"), base = ref(a.base || `origin/${config.baseBranch}`);
-  if (!ancestor(base, head)) throw new Error("Current branch is not based on the configured base branch");
-  const commits = range(base, head), ledger = await loadLedger();
+  const head = ref("HEAD"), base = ref(a.base || ledger.lastMergedUpstream || `origin/${config.baseBranch}`, "sync base");
+  if (!ancestor(base, head)) throw new Error("Current branch is not based on the selected sync base");
+  const commits = range(base, head);
   const landedIds = new Set(patchIds(range(ledger.lastMergedUpstream || upstream, upstream)).values());
   const ids = patchIds(commits);
   const drop = commits.filter(c => landedIds.has(ids.get(c)));
   const keep = commits.filter(c => !drop.includes(c));
-  const report = { dryRun: !apply, upstream, keep: keep.map(commitSummary), drop: drop.map(commitSummary), conflicts: gitLines(["diff", "--name-only", `${upstream}...HEAD`]).filter(f => config.hotFiles.includes(f)) };
+  const report = { dryRun: !apply, base, upstream, keep: keep.map(commitSummary), drop: drop.map(commitSummary), conflicts: gitLines(["diff", "--name-only", `${upstream}...HEAD`]).filter(f => config.hotFiles.includes(f)) };
   output(report);
   if (!apply) return;
   requireClean(true);
   const backup = `backup/${config.baseBranch}-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
   git(["branch", backup, "HEAD"]);
-  git(["reset", "--keep", upstream]);
-  for (const commit of keep) git(["cherry-pick", commit]);
-  ledger.lastMergedUpstream = a.target || target; await saveLedger(ledger);
   const remote = assertPushRemote(a.remote || config.originRemote);
   const branch = git(["branch", "--show-current"]) || config.baseBranch;
-  await recordAppliedState(remote, branch, remoteTip(remote, branch));
-  if (a.push) git(["push", `--force-with-lease=refs/heads/${branch}:${ref(`${remote}/${branch}`, "origin branch")}`, remote, `HEAD:refs/heads/${branch}`]);
+  const expectedRemote = remoteTip(remote, branch);
+  git(["reset", "--keep", upstream]);
+  for (const commit of keep) git(["cherry-pick", commit]);
+  validate();
+  ledger.lastMergedUpstream = a.target || target;
+  await saveLedger(ledger);
+  await recordAppliedState(remote, branch, expectedRemote);
+  if (a.push) {
+    if (remoteTip(remote, branch) !== expectedRemote) throw new Error("Remote changed during sync; refusing to push");
+    git(["push", `--force-with-lease=refs/heads/${branch}:${expectedRemote}`, remote, `HEAD:refs/heads/${branch}`]);
+  }
 }
 async function adopt() {
   const pr = a._[1]; if (!pr || !/^\d+$/.test(pr)) throw new Error("adopt requires a numeric PR");

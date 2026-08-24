@@ -158,6 +158,13 @@ progress.
 <command>node .docs/scripts/git-sync-toolkit/cli.js sync --target v0.5.56 --apply --push</command>
 </example>
 
+`sync` uses the explicit `--base` when supplied; otherwise it uses the
+ledger's `lastMergedUpstream` boundary. This preserves fork-local commits
+that are already present in `origin/<branch>` while dropping only changes
+whose patch IDs or adopted-PR records are represented by the selected
+upstream target. The operation validates the rebuilt branch before updating
+the ledger and checks the live remote tip again before an optional push.
+
 ### Adopt an upstream PR temporarily
 
 <example>
