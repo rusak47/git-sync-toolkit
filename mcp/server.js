@@ -44,7 +44,7 @@ const tools = [
   {
     name: "sync_list_worktrees",
     description: "List Git worktrees for the configured repository.",
-    inputSchema: {},
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "sync_analyze",
@@ -78,6 +78,26 @@ const tools = [
     description: "Publish a previously validated branch. Requires explicit confirmation.",
     inputSchema: { type: "object", properties: { branch: stringProperty, worktree: stringProperty, apply: { type: "boolean" } } },
   },
+  {
+    name: "sync_copy_worktree",
+    description: "Preview or create a new branch and worktree from a source branch.",
+    inputSchema: { type: "object", required: ["source", "target"], properties: { source: stringProperty, target: stringProperty, worktree: stringProperty, apply: { type: "boolean" } } },
+  },
+  {
+    name: "sync_delete_branch",
+    description: "Preview or delete a local branch, optionally removing its associated worktree.",
+    inputSchema: { type: "object", required: ["branch"], properties: { branch: stringProperty, worktree: { type: "boolean" }, force: { type: "boolean" }, apply: { type: "boolean" } } },
+  },
+  {
+    name: "sync_list_backups",
+    description: "List local recovery backups.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "sync_restore_backup",
+    description: "Preview or restore a branch from a local recovery backup.",
+    inputSchema: { type: "object", required: ["backup"], properties: { backup: stringProperty, worktree: stringProperty, apply: { type: "boolean" } } },
+  },
 ];
 
 const server = new Server({ name: "git-sync-toolkit", version: "0.1.0" }, { capabilities: { tools: {} } });
@@ -86,7 +106,7 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
   const args = request.params.arguments || {};
   try {
     if (request.params.name === "sync_list_worktrees") {
-      return result({ worktrees: (await runGit(["worktree", "list", "--porcelain"])).trim() });
+      return result({ worktrees: parseWorktrees(await runGit(["worktree", "list", "--porcelain"])) });
     }
     const cliArgs = [];
     if (request.params.name === "sync_analyze") {
@@ -109,6 +129,23 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
       cliArgs.push("publish");
       if (args.branch) cliArgs.push("--branch", args.branch);
       if (args.apply) cliArgs.push("--apply");
+    } else if (request.params.name === "sync_copy_worktree") {
+      cliArgs.push("copy", "--source", args.source, "--target", args.target);
+      if (args.worktree && !["sync_copy_worktree", "sync_delete_branch", "sync_restore_backup"].includes(request.params.name)) {
+        cliArgs.push("--worktree", args.worktree);
+      }
+      if (args.apply) cliArgs.push("--apply");
+    } else if (request.params.name === "sync_delete_branch") {
+      cliArgs.push("delete", "--delete", args.branch);
+      if (args.worktree) cliArgs.push("--worktree");
+      if (args.force) cliArgs.push("--force");
+      if (args.apply) cliArgs.push("--apply");
+    } else if (request.params.name === "sync_list_backups") {
+      cliArgs.push("backup", "--list");
+    } else if (request.params.name === "sync_restore_backup") {
+      cliArgs.push("restore", "--backup", args.backup);
+      if (args.worktree) cliArgs.push("--worktree", args.worktree);
+      if (args.apply) cliArgs.push("--apply");
     } else {
       throw new Error(`Unknown tool: ${request.params.name}`);
     }
@@ -118,6 +155,16 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
     return { isError: true, content: [{ type: "text", text: error.message }] };
   }
 });
+
+function parseWorktrees(text) {
+  return text.trim().split("\n\n").filter(Boolean).map(block => {
+    const fields = Object.fromEntries(block.split("\n").map(line => {
+      const index = line.indexOf(" ");
+      return [line.slice(0, index), line.slice(index + 1)];
+    }));
+    return { path: fields.worktree, head: fields.HEAD, branch: fields.branch?.replace("refs/heads/", "") || null, bare: "bare" in fields };
+  });
+}
 
 async function runGit(args) {
   const child = spawn(process.env.GIT_BIN || "git", args, { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] });

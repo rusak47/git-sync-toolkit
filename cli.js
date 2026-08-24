@@ -144,9 +144,12 @@ async function copy() {
   }
   if (!root) root = join(repoRoot, "worktrees");
   const destination = join(root, targetBranch);
+  const result = { dryRun: !apply, source, sourceSha, target: targetBranch, worktree: destination };
+  output(result);
+  if (!apply) return;
   await mkdir(destination, { recursive: true });
   git(["worktree", "add", "-b", targetBranch, destination, sourceSha]);
-  output({ copied: true, source, sourceSha, target: targetBranch, worktree: destination });
+  output({ ...result, dryRun: false, copied: true });
 }
 async function deleteBranch() {
   const branch = typeof a.delete === "string" ? a.delete : (a._[1] || a.branch);
