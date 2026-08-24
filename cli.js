@@ -7,12 +7,13 @@ import { join, dirname as pathDirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as outputStream } from "node:process";
 
-const a = parseArgs(process.argv.slice(2)), command = a._[0] || "analyze";
+const a = parseArgs(process.argv.slice(2));
+const command = a._[0] || (a.delete ? "delete" : "analyze");
 const invocationCwd = process.cwd();
 for (const option of ["plan", "generate"]) {
   if (a[option] && !isAbsolute(a[option])) a[option] = resolve(invocationCwd, a[option]);
 }
-if (a.worktree && command !== "copy") {
+if (a.worktree && !["copy", "delete"].includes(command)) {
   let selected = a.worktree;
   const lines = git(["worktree", "list", "--porcelain"]).split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -146,6 +147,35 @@ async function copy() {
   await mkdir(destination, { recursive: true });
   git(["worktree", "add", "-b", targetBranch, destination, sourceSha]);
   output({ copied: true, source, sourceSha, target: targetBranch, worktree: destination });
+}
+async function deleteBranch() {
+  const branch = typeof a.delete === "string" ? a.delete : (a._[1] || a.branch);
+  if (!branch) throw new Error("delete requires a branch name");
+  if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.startsWith("/") || branch.endsWith("/")) {
+    throw new Error("Invalid branch name");
+  }
+  try { git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]); }
+  catch { throw new Error(`Local branch does not exist: ${branch}`); }
+  const blocks = git(["worktree", "list", "--porcelain"]).split("\n\n").map(block => block.split("\n"));
+  const attached = blocks.find(block => block.includes(`branch refs/heads/${branch}`));
+  const attachedPath = attached?.find(line => line.startsWith("worktree "))?.slice("worktree ".length);
+  const selectedPath = a.worktree ? resolve(invocationCwd, a.worktree) : null;
+  if (attachedPath && !selectedPath) {
+    throw new Error(`Branch ${branch} is checked out at ${attachedPath}; remove that worktree first or pass --worktree <path>`);
+  }
+  if (selectedPath && attachedPath !== selectedPath) {
+    throw new Error(`--worktree does not point to branch ${branch}; expected ${attachedPath || "(no attached worktree)"}`);
+  }
+  const dirty = attachedPath ? git(["-C", attachedPath, "status", "--porcelain", "--untracked-files=all"]) !== "" : false;
+  if (dirty && !a.force) {
+    throw new Error(`Worktree ${attachedPath} has uncommitted changes; review them or add --force`);
+  }
+  const result = { dryRun: !apply, branch, worktree: attachedPath || null, dirty, removeWorktree: Boolean(attachedPath) };
+  output(result);
+  if (!apply) return;
+  if (attachedPath) git(["worktree", "remove", ...(a.force ? ["--force"] : []), "--", attachedPath]);
+  git(["branch", a.force ? "-D" : "-d", branch]);
+  output({ ...result, dryRun: false, deleted: true });
 }
 function clean() { try { return git(["status", "--porcelain"]) === ""; } catch { return false; } }
 async function classify() {
@@ -668,6 +698,6 @@ async function publish() {
   validate();
   git(["push", `--force-with-lease=refs/heads/${branch}:${state.expectedRemote}`, remote, `HEAD:refs/heads/${branch}`]);
 }
-const commands = { analyze, classify, copy, land, landed, refresh, sync, adopt, restore, backup, publish, cleanup, "reset-candidates": resetCandidates };
+const commands = { analyze, classify, copy, delete: deleteBranch, land, landed, refresh, sync, adopt, restore, backup, publish, cleanup, "reset-candidates": resetCandidates };
 try { if (!commands[command]) throw new Error(`Unknown operation: ${command}`); await commands[command](); }
 catch (e) { console.error(`upstream toolkit: ${e.message}`); process.exitCode = 1; }

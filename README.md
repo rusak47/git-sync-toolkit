@@ -72,6 +72,27 @@ confirmation before using it; otherwise it uses `<repository>/worktrees`.
 The source must resolve to a commit and the target branch must not already
 exist.
 
+### Delete a branch and its worktree
+
+Preview deletion:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js delete --delete test/my-work
+```
+
+Use `-D` as the short form and pass the worktree path to remove it together
+with the branch:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js -D test/my-work \
+  --worktree /tmp/9router/worktrees/test/my-work --apply
+```
+
+If the branch is checked out by a worktree, deletion stops unless
+`--worktree <path>` identifies that worktree. Dirty worktrees also stop unless
+`--force` is supplied. `--apply` is required for removal; `--force` permits
+discarding uncommitted changes.
+
 ### Inspect and classify changes
 
 <example>

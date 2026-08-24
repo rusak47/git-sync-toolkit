@@ -64,7 +64,7 @@ export async function saveLedger(data) {
 }
 export function parseArgs(argv) {
   const out = { _: [] };
-  const short = { s: "source", t: "target", w: "worktree" };
+  const short = { s: "source", t: "target", w: "worktree", D: "delete", f: "force" };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i]; if (!x.startsWith("-")) { out._.push(x); continue; }
     if (x.startsWith("-") && !x.startsWith("--")) {
