@@ -14,6 +14,10 @@ const confirmations = new Map();
 
 const stringProperty = { type: "string", minLength: 1 };
 
+const worktreePathProp = { type: "string", minLength: 1, description: "Worktree path or branch name to operate in. Omit to use current worktree." };
+const applyProp = { type: "boolean", description: "false or omitted: preview only and returns a confirmation token. true: perform the operation." };
+const confirmationProp = { type: "string", minLength: 1, description: "Token returned by the preview call. Required when apply=true. Single-use, 10-minute expiry." };
+
 function repositoryRoot() {
   return resolve(process.env.GIT_SYNC_REPO_ROOT || process.cwd());
 }
@@ -48,7 +52,8 @@ function requestKey(name, args) {
   const copy = { ...args };
   delete copy.apply;
   delete copy.confirmation;
-  return JSON.stringify([name, copy]);
+  const keys = Object.keys(copy).sort();
+  return JSON.stringify([name, Object.fromEntries(keys.map(k => [k, copy[k]]))]);
 }
 function mutating(name, args) {
   return ["sync_refresh", "sync_cleanup", "sync_copy_worktree", "sync_delete_branch", "sync_restore_backup", "sync_publish"].includes(name) && args.apply === true;
@@ -68,44 +73,98 @@ const tools = [
   {
     name: "sync_analyze",
     description: "Preview synchronization differences without modifying Git state.",
-    inputSchema: { type: "object", properties: { target: stringProperty, worktree: stringProperty } },
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: { ...stringProperty, description: "Upstream branch to compare against. Default: upstream/master." },
+        worktree: worktreePathProp,
+      },
+    },
   },
   {
     name: "sync_refresh",
-    description: "Preview or apply a worktree refresh from a remote ref. Apply requires explicit confirmation.",
+    description: "Preview or apply a worktree refresh from a remote ref. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token. continue=true resumes after a conflicted apply. autoAcceptIncoming=true auto-resolves incoming changes without prompting.",
     inputSchema: {
       type: "object",
-      properties: { remoteRef: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty, autoAcceptIncoming: { type: "boolean" }, continue: { type: "boolean" } },
+      properties: {
+        remoteRef: { ...stringProperty, description: "Remote ref to refresh from (e.g., upstream/main). Default: last merged upstream from ledger." },
+        worktree: worktreePathProp,
+        apply: applyProp,
+        confirmation: confirmationProp,
+        continue: { type: "boolean", description: "Resume an interrupted refresh from saved progress. Mutually exclusive with remoteRef." },
+        autoAcceptIncoming: { type: "boolean", description: "Auto-resolve conflicts by accepting incoming (theirs) changes. Only meaningful with continue or when conflicts expected." },
+      },
     },
   },
   {
     name: "sync_cleanup",
-    description: "Preview or apply a cleanup plan. Apply requires explicit confirmation.",
+    description: "Preview or apply a cleanup plan. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token. continue=true resumes after a conflicted apply. autoAcceptIncoming=true auto-resolves incoming changes without prompting.",
     inputSchema: {
       type: "object",
       required: ["plan"],
-      properties: { plan: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty, continue: { type: "boolean" }, autoAcceptIncoming: { type: "boolean" } },
+      properties: {
+        plan: { ...stringProperty, description: "Cleanup plan file path from sync_analyze output." },
+        worktree: worktreePathProp,
+        apply: applyProp,
+        confirmation: confirmationProp,
+        continue: { type: "boolean", description: "Resume an interrupted cleanup from saved progress." },
+        autoAcceptIncoming: { type: "boolean", description: "Auto-resolve conflicts by accepting incoming (theirs) changes. Only meaningful with continue or when conflicts expected." },
+      },
     },
   },
   {
     name: "sync_validate_publish",
     description: "Run configured validation and capture publish state without pushing.",
-    inputSchema: { type: "object", properties: { branch: stringProperty, worktree: stringProperty } },
+    inputSchema: {
+      type: "object",
+      properties: {
+        branch: { ...stringProperty, description: "Branch to validate. Default: current branch." },
+        worktree: worktreePathProp,
+      },
+    },
   },
   {
     name: "sync_publish",
-    description: "Publish a previously validated branch. Requires explicit confirmation.",
-    inputSchema: { type: "object", properties: { branch: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty } },
+    description: "Publish a previously validated branch. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        branch: { ...stringProperty, description: "Branch to publish. Default: last validated branch." },
+        worktree: worktreePathProp,
+        apply: applyProp,
+        confirmation: confirmationProp,
+      },
+    },
   },
   {
     name: "sync_copy_worktree",
-    description: "Preview or create a new branch and worktree from a source branch.",
-    inputSchema: { type: "object", required: ["source", "target"], properties: { source: stringProperty, target: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty } },
+    description: "Preview or create a new branch and worktree from a source branch. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",
+    inputSchema: {
+      type: "object",
+      required: ["source", "target"],
+      properties: {
+        source: { ...stringProperty, description: "Source branch to copy from (e.g., upstream/master)." },
+        target: { ...stringProperty, description: "New branch name to create." },
+        worktree: worktreePathProp,
+        apply: applyProp,
+        confirmation: confirmationProp,
+      },
+    },
   },
   {
     name: "sync_delete_branch",
-    description: "Preview or delete a local branch, optionally removing its associated worktree.",
-    inputSchema: { type: "object", required: ["branch"], properties: { branch: stringProperty, worktree: { type: "boolean" }, force: { type: "boolean" }, apply: { type: "boolean" }, confirmation: stringProperty } },
+    description: "Preview or delete a local branch, optionally removing its associated worktree. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",
+    inputSchema: {
+      type: "object",
+      required: ["branch"],
+      properties: {
+        branch: { ...stringProperty, description: "Local branch name to delete." },
+        worktree: { type: "boolean", description: "Also remove the branch's worktree if it exists." },
+        force: { type: "boolean", description: "Skip safety checks (e.g., unmerged commits)." },
+        apply: applyProp,
+        confirmation: confirmationProp,
+      },
+    },
   },
   {
     name: "sync_list_backups",
@@ -114,8 +173,17 @@ const tools = [
   },
   {
     name: "sync_restore_backup",
-    description: "Preview or restore a branch from a local recovery backup.",
-    inputSchema: { type: "object", required: ["backup"], properties: { backup: stringProperty, worktree: stringProperty, apply: { type: "boolean" }, confirmation: stringProperty } },
+    description: "Preview or restore a branch from a local recovery backup. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",
+    inputSchema: {
+      type: "object",
+      required: ["backup"],
+      properties: {
+        backup: { ...stringProperty, description: "Backup name to restore (from sync_list_backups)." },
+        worktree: worktreePathProp,
+        apply: applyProp,
+        confirmation: confirmationProp,
+      },
+    },
   },
 ];
 
@@ -127,7 +195,8 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
     if (mutating(request.params.name, args)) {
       const entry = confirmations.get(args.confirmation);
       if (!entry || entry.expires < Date.now() || entry.key !== requestKey(request.params.name, args)) {
-        throw new Error("Invalid or expired confirmation; run the same operation in preview mode first");
+        const reason = !entry ? "missing" : entry.expires < Date.now() ? "expired" : `key mismatch: stored=${entry.key} got=${requestKey(request.params.name, args)}`;
+        throw new Error(`Invalid or expired confirmation (${reason}); run the same operation in preview mode first`);
       }
       confirmations.delete(args.confirmation);
     }
@@ -157,9 +226,7 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
       if (args.apply) cliArgs.push("--apply");
     } else if (request.params.name === "sync_copy_worktree") {
       cliArgs.push("copy", "--source", args.source, "--target", args.target);
-      if (args.worktree && !["sync_copy_worktree", "sync_delete_branch", "sync_restore_backup"].includes(request.params.name)) {
-        cliArgs.push("--worktree", args.worktree);
-      }
+      if (args.worktree) cliArgs.push("--worktree", args.worktree);
       if (args.apply) cliArgs.push("--apply");
     } else if (request.params.name === "sync_delete_branch") {
       cliArgs.push("delete", "--delete", args.branch);
