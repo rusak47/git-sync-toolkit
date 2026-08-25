@@ -13,6 +13,7 @@ const invocationCwd = process.cwd();
 for (const option of ["plan", "generate"]) {
   if (a[option] && !isAbsolute(a[option])) a[option] = resolve(invocationCwd, a[option]);
 }
+await mkdir(config.stateDir, { recursive: true });
 if (a.worktree && !["copy", "delete"].includes(command)) {
   let selected = a.worktree;
   const lines = git(["worktree", "list", "--porcelain"]).split("\n");
