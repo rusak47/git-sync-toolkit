@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 test("refresh defaults to a read-only origin update plan", () => {
-  const root = fileURLToPath(new URL("../../../../", import.meta.url));
+  const root = fileURLToPath(new URL("../", import.meta.url));
   const cli = fileURLToPath(new URL("../cli.js", import.meta.url));
   const output = execFileSync(process.execPath, [cli, "refresh", "--json"], { cwd: root, encoding: "utf8" });
   const plan = JSON.parse(output);
