@@ -7,14 +7,49 @@ node .docs/scripts/git-sync-toolkit/cli.js <operation> [target] [options]
 ```
 
 All operations are read-only by default. `--apply` is required for fetch,
-rebase, cherry-pick, ledger, or patch writes. `--push` is accepted by `land`
-and `sync`, uses `--force-with-lease`, and never permits pushes to `upstream`.
+rebase, cherry-pick, ledger, or patch writes. `--push` is accepted by `land`,
+uses `--force-with-lease`, and never permits pushes to `upstream`.
 `refresh` updates the current branch from its `origin/<branch>` counterpart
 using fast-forward when possible, otherwise rebase. Apply operations require a
 clean tree; `land` and `sync` create `backup/master-TIMESTAMP`.
 Refs are resolved as immutable commits and ancestry is checked before rebasing.
 The ledger is schema-versioned and written atomically. Keep `.docs/scripts/samples`
 ignored: it is reference material, not executable toolkit code.
+
+## Which synchronization command should I use?
+
+To rebuild the current branch on fresh upstream history while replaying
+fork-unique commits, use `sync`:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js sync \
+  --target upstream/master \
+  --json
+node .docs/scripts/git-sync-toolkit/cli.js sync \
+  --target upstream/master \
+  --apply
+```
+
+Review the preview's `keep` and `drop` lists before applying. `sync` fetches
+upstream and origin in apply mode, resets the current branch to the selected
+upstream target, then replays fork-local commits that are not already
+represented upstream by patch ID. It creates a backup ref and updates the
+ledger. Publishing is a separate `publish --apply` operation.
+
+Merge commits in the current branch are not replayed as commits. Their
+individual non-merge commits remain eligible for replay, which avoids
+reintroducing an old upstream-integration merge when the selected target
+already contains that upstream history. Any conflict-resolution changes that
+exist only in the merge commit require a manually reviewed `cleanup` plan.
+
+Use `refresh` to update the current branch from its fork remote counterpart
+(`origin/<branch>` by default), while preserving local-only commits. Use
+`merge` to cherry-pick selected commits from one local branch into the
+currently checked-out branch. Use `copy` to create or replace a branch and
+worktree from a source ref, and `worktree checkout` to attach an existing
+local or remote branch to a new worktree. Use `cleanup` only when you need a
+manually reviewed history rewrite—such as selectively dropping, reordering,
+replaying, or squashing commits.
 
 ## Repository configuration
 
@@ -70,9 +105,35 @@ Short options are also supported: `-s`, `-t`, and `-w`. The target worktree
 path is `<worktrees-root>/<target-branch>`. If `--worktree` is omitted and
 existing worktrees provide a likely common root, the toolkit asks for
 confirmation before using it; otherwise it uses `<repository>/worktrees`.
-The source must resolve to a commit and the target branch must not already
-exist. Copy previews by default; `--apply` is required to create the branch
-and worktree.
+The source must resolve to a commit. If the target branch already exists, copy
+stops and tells you to use `--force`; with `--force`, the existing branch must
+not be checked out by any worktree, a backup ref is created, and the branch is
+repointed to the source before the worktree is created. Copy previews by
+default; `--apply` is required to create or replace the branch and worktree.
+
+To replace an existing, unattached branch:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js copy \
+  --source master \
+  --target test/master \
+  --force \
+  --apply
+```
+
+### Check out a branch into a worktree
+
+Check out an existing local branch, or create a local tracking branch from
+`origin/<branch>`, in a guessed worktree directory:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js worktree checkout test/latency-aware-routing
+node .docs/scripts/git-sync-toolkit/cli.js worktree checkout test/latency-aware-routing --apply
+```
+
+The command previews by default. If `--worktree` is supplied, it is used as
+the worktree root; otherwise the toolkit guesses it from existing worktrees.
+The branch must not already be checked out in another worktree.
 
 ### Delete a branch and its worktree
 
@@ -146,7 +207,104 @@ controls the subprocess timeout.
 <command>node .docs/scripts/git-sync-toolkit/cli.js reset-candidates upstream/master</command>
 </example>
 
+### Merge a feature branch into the current branch
+
+To see which local fork branches are candidates for merging into the current
+branch, run:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js merge --plan
+```
+
+`merge --plan` ignores branches that do not start with `test`, `fix`, `feat`,
+or `pr` (including forms such as `test/master` and `pr-2941`). It excludes the
+currently checked-out target branch. It first prints every candidate as `branch ahead N behind M`, where
+`behind` is measured against the configured upstream base (for example,
+`upstream/master`), sorted from fewest to most commits, followed by a separate
+list of exact merge commands. Branches already fully contained in the target are marked `merged`;
+already-contained and no-common-history branches are summarized without
+listing their commits. Use `--json` when structured status details are needed.
+The human-readable plan starts with the commands to fetch and reset the
+checked-out branch to that upstream base. The plan is read-only; review each
+command before running it.
+
+Preview the commits that would be cherry-picked from a source branch onto the
+currently checked-out branch:
+
+<example>
+<command>node .docs/scripts/git-sync-toolkit/cli.js merge --source feature/my-work</command>
+<command>node .docs/scripts/git-sync-toolkit/cli.js merge --source feature/my-work --apply</command>
+</example>
+
+The target defaults to the branch checked out where the command is run. An
+explicit target may be supplied as the second positional branch:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js merge feature/my-work test/master
+```
+
+The target must be checked out in the current worktree. Preview is the default;
+`--apply` creates a `backup/<target>-TIMESTAMP` ref, cherry-picks source-only
+commits in order, and runs configured validation. Commits whose patch IDs are
+already present in the target, or whose subjects match an existing target
+commit after a conflict-resolved integration, are listed under `skipped` and
+are not cherry-picked again.
+
+If a skipped commit contains a fix that must be reapplied despite matching a
+target subject or patch ID, force it by commit SHA (short SHAs are accepted):
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js merge \
+  --source pr/latency-view-feature \
+  --replay 9946dafc \
+  --apply
+```
+
+`--replay` accepts a comma-separated list when multiple skipped commits must
+be restored. The requested commits must belong to the source branch; conflicts
+are handled with the normal `merge --continue` or `merge --abort` workflow.
+
+If `merge --apply` stops on a conflict, do not rerun the merge command.
+Resolve the conflicts and stage the files, then continue the saved merge:
+
+```sh
+git add <resolved-files>
+node .docs/scripts/git-sync-toolkit/cli.js merge --continue
+```
+
+Repeat the resolve, stage, and `merge --continue` steps for any additional
+conflicts. The continuation completes the remaining cherry-picks and runs
+validation. Rerunning `merge --apply` would reset and replay the operation.
+
+To abandon a conflicted merge and restore the target branch to its pre-merge
+state, run:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js merge --abort
+```
+
+The generated backup ref is retained.
+
 ### Refresh a worktree from fork origin
+
+`refresh` synchronizes the **currently checked-out branch** with its fork
+remote branch. By default, it uses `origin/<current-branch>`; use
+`--remoteRef <remote>/<branch>` to select another remote branch. It does not
+switch branches, create worktrees, or merge arbitrary local branches.
+
+The command first previews the synchronization plan. It fetches the selected
+remote only with `--apply`, then:
+
+- reports `up-to-date` when the current branch already contains the remote tip;
+- uses a fast-forward when the current branch is strictly behind and no local
+  commits need to be preserved; or
+- resets to the remote tip and cherry-picks local-only commits that are not
+  already represented by patch ID or the synchronization ledger.
+
+Local commits that are already present in the remote are reported as
+`dropped`; local commits that remain after the refresh are reported as `kept`.
+Apply mode requires a clean worktree. A backup ref is created before a
+non-fast-forward refresh.
 
 <example>
 <command>node .docs/scripts/git-sync-toolkit/cli.js refresh</command>
@@ -154,8 +312,9 @@ controls the subprocess timeout.
 <command>node .docs/scripts/git-sync-toolkit/cli.js refresh --remoteRef origin/master --apply --auto-accept-incoming</command>
 </example>
 
-Refresh persists its replay position before each cherry-pick. If an apply
-stops on a conflict, resolve and stage the files, then resume with:
+If an apply stops while replaying a kept commit, refresh persists its replay
+position before each cherry-pick. Resolve and stage the files, then resume
+with:
 
 ```sh
 node .docs/scripts/git-sync-toolkit/cli.js refresh \
@@ -180,15 +339,83 @@ progress.
 <example>
 <command>node .docs/scripts/git-sync-toolkit/cli.js sync --target upstream/master --json</command>
 <command>node .docs/scripts/git-sync-toolkit/cli.js sync --target v0.5.56 --apply</command>
-<command>node .docs/scripts/git-sync-toolkit/cli.js sync --target v0.5.56 --apply --push</command>
 </example>
 
 `sync` uses the explicit `--base` when supplied; otherwise it uses the
 ledger's `lastMergedUpstream` boundary. This preserves fork-local commits
 that are already present in `origin/<branch>` while dropping only changes
 whose patch IDs or adopted-PR records are represented by the selected
-upstream target. The operation validates the rebuilt branch before updating
-the ledger and checks the live remote tip again before an optional push.
+upstream target. When the selected fork base and upstream have diverged, sync
+uses their merge base as the replay boundary so commits already present in the
+fork base are still inspected instead of being silently treated as absent.
+If the remembered default base is no longer an ancestor of the current branch,
+sync automatically narrows it to the current branch's merge base and reports
+`requestedBase` plus `baseAdjusted: true`. An explicitly supplied `--base`
+remains strict and still fails when it is not an ancestor. The operation
+validates the rebuilt branch before updating the ledger. It never pushes.
+
+If rebasing changed a PR enough that automatic matching cannot identify it as
+already present in the selected target, explicitly exclude its local commit
+from replay with `--skip`:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js sync \
+  --target origin/master \
+  --skip 64923679,c5ea8b25 \
+```
+
+`--skip` accepts full or unambiguous short SHAs, comma-separated. Each SHA
+must be a commit in the sync range. Skipped commits appear in `drop` with the
+reason `manually skipped with --skip`; review the preview before using
+`--apply`.
+
+For rebased PRs whose patch IDs changed but whose commit subjects are unchanged,
+you can opt into subject-based dropping:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js sync \
+  --target origin/master \
+  --skip-subject-matches
+```
+
+This is disabled by default because equal subjects do not guarantee equal
+content. The preview reports these entries with the reason
+`already represented upstream by matching subject
+(--skip-subject-matches)`.
+
+`sync --apply` creates and reports a `backup/*` ref before changing the
+current branch. If replay stops on a conflict, do not rerun `sync --apply`.
+Resolve and stage the files, then resume the saved replay:
+
+```sh
+git add <resolved-files>
+node .docs/scripts/git-sync-toolkit/cli.js sync --continue
+```
+
+Repeat the resolve, stage, and `sync --continue` steps for additional
+conflicts. The continuation completes validation, ledger updates, and publish
+state only after all kept commits are replayed.
+
+To separate rebuilding from publishing, run sync, then publish the completed
+result:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js sync \
+  --target upstream/master \
+  --base <base> \
+  --apply
+node .docs/scripts/git-sync-toolkit/cli.js publish \
+  --validate \
+  --branch master
+node .docs/scripts/git-sync-toolkit/cli.js publish \
+  --branch master \
+  --apply
+```
+
+The publish step does not rerun sync. It validates the current `HEAD`, records
+the remote tip, and then pushes only if the local `HEAD` and remote tip remain
+unchanged. `sync --push` is rejected; use `publish --apply` after reviewing
+the sync result.
 
 ### Adopt an upstream PR temporarily
 
@@ -235,6 +462,23 @@ List available recovery backups before restoring one:
 <command>node .docs/scripts/git-sync-toolkit/cli.js backup --list --json</command>
 </example>
 
+Create a backup of the currently checked-out branch before a manual rebuild.
+Preview first; `--apply` creates the local `backup/*` ref:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js backup --create
+node .docs/scripts/git-sync-toolkit/cli.js backup --create --apply
+```
+
+The automatic name includes the current branch and a timestamp. To choose a
+suffix explicitly:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js backup \
+  --create before-test-master-rebuild \
+  --apply
+```
+
 Backups are local `backup/*` branches; listing them never changes refs.
 Preview and then explicitly delete an individual backup:
 
@@ -265,7 +509,8 @@ For a rewrite that already completed before validation failed, use
 `publish --validate`. It runs validation, records the current local `HEAD` and
 remote tip, and does not push. `publish --apply` then compares the live remote
 tip and local `HEAD` with the values captured during validation, validates
-again, and pushes with `--force-with-lease`. If someone changes
+again, and pushes with `--force-with-lease`. With no `--branch`, publish targets
+the currently checked-out branch. If someone changes
 `origin/master` or the local result in between, publishing is rejected. It
 rejects `upstream`; use `--skip-validation` only when explicitly necessary.
 
@@ -314,8 +559,11 @@ modification first and add `--apply` to write it:
 <command>node .docs/scripts/git-sync-toolkit/cli.js cleanup --plan .docs/fork-sync-state/my-branch-cleanup.json --modify 10c38bbf --move-before ca86107b --apply</command>
 </example>
 
-Backups and patch snapshots are stored in ignored `.docs` state. If cleanup
-stops on a conflict, resolve and stage the files, then resume the plan:
+Backups are Git refs. Toolkit ledger, progress, and patch snapshots are stored
+outside the repository under `/tmp/git-sync-toolkit/<repository-key>/`, so the
+toolkit does not require repository-local `.docs` directories or ignore rules.
+If cleanup stops on a conflict, resolve and stage the files, then resume the
+plan:
 
 <example>
 <command>git status</command>

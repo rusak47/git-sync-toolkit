@@ -1,1 +1,3 @@
 config.local.js
+patches/*
+fork-sync-state/*

@@ -2,19 +2,38 @@
 import { parseArgs, git, gitLines, ref, range, ancestor, mergeBase, patchIds, loadLedger, saveLedger, requireClean, assertPushRemote, assertValidatedState, commitSummary, config } from "./lib.js";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { join, dirname as pathDirname } from "node:path";
+import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as outputStream } from "node:process";
 
 const a = parseArgs(process.argv.slice(2));
 const command = a._[0] || (a.delete ? "delete" : "analyze");
 const invocationCwd = process.cwd();
+const repositoryRoot = git(["rev-parse", "--show-toplevel"]);
+const commonGitDir = resolve(repositoryRoot, git(["rev-parse", "--git-common-dir"]));
+let originUrl = "no-origin";
+try { originUrl = git(["config", "--get", "remote.origin.url"]) || originUrl; } catch {}
+const repositoryKey = `${commonGitDir}-${originUrl}`;
+const repositorySlug = repositoryRoot.split("/").filter(Boolean).at(-1)?.replace(/[^A-Za-z0-9._-]/g, "-") || "repository";
+const stateKey = createHash("sha256").update(repositoryKey).digest("hex").slice(0, 16);
+const repositoryStateDir = pathToFileURL(`${resolve(tmpdir(), "git-sync-toolkit", `${repositorySlug}-${stateKey}`)}/`);
+config.ledger = new URL("ledger.json", repositoryStateDir);
+config.patchDir = new URL("patches/merged/", repositoryStateDir);
+config.stateDir = repositoryStateDir;
+config.appliedState = new URL("applied.json", repositoryStateDir);
+config.cleanupProgress = new URL("cleanup-progress.json", repositoryStateDir);
+config.refreshProgress = new URL("refresh-progress.json", repositoryStateDir);
+config.syncProgress = new URL("sync-progress.json", repositoryStateDir);
+config.mergeProgress = new URL("merge-progress.json", repositoryStateDir);
 for (const option of ["plan", "generate"]) {
-  if (a[option] && !isAbsolute(a[option])) a[option] = resolve(invocationCwd, a[option]);
+  if (typeof a[option] === "string" && !isAbsolute(a[option])) a[option] = resolve(invocationCwd, a[option]);
 }
 await mkdir(config.stateDir, { recursive: true });
-if (a.worktree && !["copy", "delete"].includes(command)) {
+if (a.worktree && !["copy", "delete", "worktree"].includes(command)) {
   let selected = a.worktree;
   const lines = git(["worktree", "list", "--porcelain"]).split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -38,7 +57,7 @@ const output = x => json
 function validate() {
   if (a["skip-validation"]) return;
   for (const [command, args] of config.validationCommands) {
-    execFileSync(command, args, { stdio: "inherit" });
+    execFileSync(command, args, { stdio: "pipe" });
   }
 }
 async function recordAppliedState(remote, branch, expectedRemote) {
@@ -60,8 +79,21 @@ async function clearCleanupProgress() {
 async function clearRefreshProgress() {
   try { await unlink(config.refreshProgress); } catch (e) { if (e.code !== "ENOENT") throw e; }
 }
+async function clearSyncProgress() {
+  try { await unlink(config.syncProgress); } catch (e) { if (e.code !== "ENOENT") throw e; }
+}
+async function clearMergeProgress() {
+  try { await unlink(config.mergeProgress); } catch (e) { if (e.code !== "ENOENT") throw e; }
+}
 function remoteTip(remote, branch) {
   return git(["ls-remote", remote, `refs/heads/${branch}`]).split(/\s+/)[0] || "";
+}
+function remoteBaseRef(remote, branch) {
+  try { return ref(`${remote}/${branch}`, `${remote} base`), `${remote}/${branch}`; }
+  catch {
+    const head = git(["symbolic-ref", "--short", `refs/remotes/${remote}/HEAD`]);
+    return ref(head, `${remote} default branch`), head;
+  }
 }
 function autoAcceptIncoming() {
   const paths = gitLines(["diff", "--name-only", "--diff-filter=U"]);
@@ -123,34 +155,68 @@ async function copy() {
     throw new Error("Invalid target branch");
   }
   const sourceSha = ref(source, "source branch");
-  try {
-    git(["show-ref", "--verify", "--quiet", `refs/heads/${targetBranch}`]);
-    throw new Error(`Target branch already exists: ${targetBranch}`);
-  } catch (error) {
-    if (error.message.startsWith("Target branch already exists")) throw error;
+  const targetExists = (() => {
+    try { git(["show-ref", "--verify", "--quiet", `refs/heads/${targetBranch}`]); return true; }
+    catch { return false; }
+  })();
+  const worktreeBlocks = git(["worktree", "list", "--porcelain"]).split("\n\n").map(block => block.split("\n"));
+  const attached = worktreeBlocks.find(block => block.includes(`branch refs/heads/${targetBranch}`));
+  const attachedPath = attached?.find(line => line.startsWith("worktree "))?.slice("worktree ".length);
+  if (targetExists && !a.force) {
+    throw new Error(`Target branch already exists: ${targetBranch}; use --force to replace its contents from ${source}`);
   }
-  const repoRoot = git(["rev-parse", "--show-toplevel"]);
-  const worktrees = git(["worktree", "list", "--porcelain"]).split("\n")
-    .filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
-  let root = a.worktree && resolve(invocationCwd, a.worktree);
-  if (!root && worktrees.length > 1) {
-    const guessed = pathDirname(worktrees[1]);
-    if (!json && input.isTTY && outputStream.isTTY) {
-      const rl = createInterface({ input, output: outputStream });
-      const answer = await rl.question(`Guessed worktrees root "${guessed}". Use it? [Y/n] `);
-      if (!answer.trim() || /^y(es)?$/i.test(answer.trim())) root = guessed;
-      else root = (await rl.question("Enter worktrees root path: ")).trim();
-      rl.close();
-    } else root = guessed;
+  if (targetExists && attachedPath) {
+    throw new Error(`Cannot replace branch ${targetBranch}; it is checked out at ${attachedPath}`);
   }
-  if (!root) root = join(repoRoot, "worktrees");
+  const root = await guessWorktreeRoot();
   const destination = join(root, targetBranch);
-  const result = { dryRun: !apply, source, sourceSha, target: targetBranch, worktree: destination };
+  const result = { dryRun: !apply, source, sourceSha, target: targetBranch, worktree: destination, replacing: targetExists };
   output(result);
   if (!apply) return;
   await mkdir(destination, { recursive: true });
-  git(["worktree", "add", "-b", targetBranch, destination, sourceSha]);
-  output({ ...result, dryRun: false, copied: true });
+  let backup;
+  if (targetExists) {
+    backup = `backup/${targetBranch.replace(/[^A-Za-z0-9._-]/g, "-")}-${Date.now()}`;
+    git(["branch", backup, targetBranch]);
+    git(["branch", "-f", targetBranch, sourceSha]);
+    git(["worktree", "add", destination, targetBranch]);
+  } else {
+    git(["worktree", "add", "-b", targetBranch, destination, sourceSha]);
+  }
+  output({ ...result, dryRun: false, copied: true, ...(backup ? { backup } : {}) });
+}
+async function worktree() {
+  if (a._[1] !== "checkout") throw new Error("worktree requires the checkout subcommand");
+  const requested = a._[2];
+  if (!requested) throw new Error("worktree checkout requires a branch name");
+  if (!/^[A-Za-z0-9._/-]+$/.test(requested) || requested.startsWith("/") || requested.endsWith("/")) {
+    throw new Error("Invalid branch name");
+  }
+  const remotePrefix = `${config.originRemote}/`;
+  const branch = requested.startsWith(remotePrefix) ? requested.slice(remotePrefix.length) : requested;
+  const localExists = (() => {
+    try { git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]); return true; }
+    catch { return false; }
+  })();
+  const remoteRef = `${config.originRemote}/${branch}`;
+  if (!localExists) {
+    try { ref(remoteRef, "remote branch"); }
+    catch { throw new Error(`Branch not found locally or on ${config.originRemote}: ${branch}`); }
+  }
+  const blocks = git(["worktree", "list", "--porcelain"]).split("\n\n").map(block => block.split("\n"));
+  const attached = blocks.find(block => block.includes(`branch refs/heads/${branch}`));
+  if (attached) {
+    const path = attached.find(line => line.startsWith("worktree "))?.slice("worktree ".length);
+    throw new Error(`Branch ${branch} is already checked out at ${path}`);
+  }
+  const root = await guessWorktreeRoot();
+  const destination = join(root, branch);
+  const result = { dryRun: !apply, branch, source: localExists ? branch : remoteRef, worktree: destination, tracking: !localExists };
+  output(result);
+  if (!apply) return;
+  await mkdir(destination, { recursive: true });
+  git(["worktree", "add", ...(localExists ? [] : ["-b", branch]), destination, localExists ? branch : remoteRef]);
+  output({ ...result, dryRun: false, checkedOut: true });
 }
 async function deleteBranch() {
   const branch = typeof a.delete === "string" ? a.delete : (a._[1] || a.branch);
@@ -183,9 +249,242 @@ async function deleteBranch() {
   output({ ...result, dryRun: false, deleted: true });
 }
 function clean() { try { return git(["status", "--porcelain"]) === ""; } catch { return false; } }
+async function guessWorktreeRoot() {
+  const repoRoot = git(["rev-parse", "--show-toplevel"]);
+  const worktrees = git(["worktree", "list", "--porcelain"]).split("\n")
+    .filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
+  let root = a.worktree && resolve(invocationCwd, a.worktree);
+  if (!root && worktrees.length > 1) {
+    const guessed = pathDirname(worktrees[1]);
+    if (!json && input.isTTY && outputStream.isTTY) {
+      const rl = createInterface({ input, output: outputStream });
+      const answer = await rl.question(`Guessed worktrees root "${guessed}". Use it? [Y/n] `);
+      if (!answer.trim() || /^y(es)?$/i.test(answer.trim())) root = guessed;
+      else root = (await rl.question("Enter worktrees root path: ")).trim();
+      rl.close();
+    } else root = guessed;
+  }
+  return root || join(repoRoot, "worktrees");
+}
 async function classify() {
   const commits = range(a.base || `origin/${config.baseBranch}`, a.branch || "HEAD");
   output(commits.map(sha => ({ sha, subject: commitSummary(sha), value: "review", files: gitLines(["diff-tree", "--no-commit-id", "--name-only", "-r", sha]) })));
+}
+async function merge() {
+  if (a.plan) {
+    const target = git(["branch", "--show-current"]);
+    if (!target) throw new Error("merge --plan requires a checked-out target branch");
+    const allowed = /^(test|fix|feat|pr)(?:[/-]|$)/;
+    const forkMainNames = new Set([config.baseBranch, target]);
+    const branches = gitLines(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+      .filter(branch => branch !== target
+        && allowed.test(branch)
+        && !(branch.includes("/") && forkMainNames.has(branch.split("/").at(-1))));
+    const targetSha = ref(target, "merge plan target");
+    const configuredUpstream = `${config.upstreamRemote}/${config.baseBranch}`;
+    let upstreamRef = configuredUpstream;
+    let upstreamSha;
+    try {
+      upstreamSha = ref(upstreamRef, "merge plan upstream base");
+    } catch {
+      upstreamRef = git(["symbolic-ref", "--short", `refs/remotes/${config.upstreamRemote}/HEAD`]);
+      upstreamSha = ref(upstreamRef, "merge plan upstream base");
+    }
+    const targetPatchIds = new Set([...patchIds(gitLines(["rev-list", "--reverse", targetSha])).values()].filter(Boolean));
+    const targetSubjects = new Set(git(["log", "--format=%s", targetSha]).split("\n").filter(Boolean));
+    const plan = branches.map(source => {
+      const sourceSha = ref(source, "merge plan source");
+      let upstreamBase;
+      try { upstreamBase = mergeBase(sourceSha, upstreamSha); } catch {}
+      const behind = upstreamBase ? range(upstreamBase, upstreamSha).length : null;
+      if (ancestor(sourceSha, targetSha)) {
+        return {
+          source,
+          status: "merged",
+          ahead: 0,
+          behind,
+          command: null,
+        };
+      }
+      let base;
+      try { base = mergeBase(targetSha, sourceSha); } catch {
+        return { source, status: "no-common-history", ahead: null, behind, command: null };
+      }
+      const commits = range(base, sourceSha);
+      const sourcePatchIds = patchIds(commits);
+      const commitsToMerge = commits.filter(commit => {
+        const patchId = sourcePatchIds.get(commit);
+        return !(patchId && targetPatchIds.has(patchId))
+          && !targetSubjects.has(git(["show", "-s", "--format=%s", commit]));
+      });
+      return {
+        source,
+        status: commitsToMerge.length ? "merge" : "merged",
+        ahead: commitsToMerge.length,
+        behind,
+        command: commitsToMerge.length
+          ? `node ${process.argv[1]} merge --source ${source} --apply`
+          : null,
+      };
+    }).sort((left, right) => {
+      if (left.ahead === null) return 1;
+      if (right.ahead === null) return -1;
+      return left.ahead - right.ahead || left.source.localeCompare(right.source);
+    });
+    if (json) {
+      output({ dryRun: true, target, branches: plan });
+    } else {
+      console.log(`reset checked-out branch to ${upstreamRef} before merging:`);
+      console.log(`git fetch ${config.upstreamRemote}`);
+      console.log(`git reset --hard ${upstreamRef}\n`);
+      console.log(`target: ${target}`);
+      console.log("branches:");
+      for (const entry of plan) {
+        if (entry.status === "merged") console.log(`> ${entry.source} ahead 0 behind ${entry.behind} [merged]`);
+        else if (entry.ahead === null) console.log(`${entry.source} no-common-history`);
+        else console.log(`${entry.source} ahead ${entry.ahead} behind ${entry.behind}`);
+      }
+      const commands = plan.filter(entry => entry.command);
+      if (commands.length) {
+        console.log("\ncommands:");
+        for (const entry of commands) {
+          console.log(entry.command);
+        }
+      }
+    }
+    return;
+  }
+  if (a.abort) {
+    let progress;
+    try { progress = JSON.parse(await readFile(config.mergeProgress, "utf8")); }
+    catch (e) { if (e.code === "ENOENT") throw new Error("No interrupted merge progress found"); throw e; }
+    const branch = git(["branch", "--show-current"]);
+    if (branch !== progress.target) {
+      throw new Error(`Merge abort must run on ${progress.target}; current branch is ${branch || "(detached)"}`);
+    }
+    ref(progress.backup, "merge backup");
+    let interrupted = true;
+    try { ref("CHERRY_PICK_HEAD", "interrupted merge"); } catch { interrupted = false; }
+    if (interrupted) {
+      try { git(["cherry-pick", "--abort"]); }
+      catch (error) { throw new Error(`Unable to abort interrupted merge: ${error.message}`); }
+    }
+    git(["reset", "--hard", progress.backup]);
+    await clearMergeProgress();
+    output({ aborted: true, branch, restored: progress.backup });
+    return;
+  }
+  if (a.continue) {
+    let progress;
+    try { progress = JSON.parse(await readFile(config.mergeProgress, "utf8")); }
+    catch (e) { if (e.code === "ENOENT") throw new Error("No interrupted merge progress found"); throw e; }
+    const branch = git(["branch", "--show-current"]);
+    if (branch !== progress.target) throw new Error(`Merge continuation must run on ${progress.target}; current branch is ${branch || "(detached)"}`);
+    try { ref("CHERRY_PICK_HEAD", "interrupted merge"); }
+    catch { throw new Error("No interrupted merge cherry-pick found; resolve the conflict and run git cherry-pick --continue first"); }
+    if (a["auto-accept-incoming"]) autoAcceptIncoming();
+    try { git(["cherry-pick", "--continue"]); }
+    catch (error) { throw new Error(`Merge continuation requires resolved and staged conflicts: ${error.message}`); }
+    for (const [offset, commit] of progress.commits.slice(progress.index + 1).entries()) {
+      const index = progress.index + 1 + offset;
+      await writeFile(config.mergeProgress, `${JSON.stringify({ ...progress, index }, null, 2)}\n`);
+      try { cherryPick(commit, false, a["auto-accept-incoming"]); }
+      catch (error) {
+        throw new Error([
+          "Merge stopped because cherry-pick encountered another conflict.",
+          "Resolve the conflicts, stage the files, then run: merge --continue",
+          "To abandon this merge instead, run: merge --abort",
+          `Original error: ${error.message}`,
+        ].join("\n"));
+      }
+    }
+    validate();
+    await clearMergeProgress();
+    output({ continued: true, branch, applied: progress.commits.length - progress.index });
+    return;
+  }
+  const source = a.source || a._[1];
+  const currentBranch = git(["branch", "--show-current"]);
+  const targetBranch = a.target || a._[2] || currentBranch;
+  if (!source) throw new Error("merge requires --source <branch> or a source branch argument");
+  if (!targetBranch) throw new Error("merge requires a checked-out target branch");
+  if (source === targetBranch) throw new Error("Merge source and target must be different branches");
+  if (targetBranch !== currentBranch) {
+    throw new Error(`Target branch ${targetBranch} is not checked out; run merge from its worktree`);
+  }
+  const sourceSha = ref(source, "merge source");
+  const targetSha = ref(targetBranch, "merge target");
+  const base = mergeBase(targetSha, sourceSha);
+  const sourceCommits = range(base, sourceSha);
+  const targetPatchIds = new Set([...patchIds(gitLines(["rev-list", "--reverse", targetSha])).values()].filter(Boolean));
+  const targetSubjects = new Set(git(["log", "--format=%s", targetSha]).split("\n").filter(Boolean));
+  const sourcePatchIds = patchIds(sourceCommits);
+  const replayRequested = String(a.replay || "").split(",").map(value => value.trim()).filter(Boolean);
+  const replayCommits = new Set(replayRequested.map(requested => {
+    const matches = sourceCommits.filter(commit => commit === requested || commit.startsWith(requested));
+    if (matches.length !== 1) throw new Error(`--replay commit must identify exactly one commit from ${source}: ${requested}`);
+    return matches[0];
+  }));
+  const isAlreadyPresent = commit => {
+    const patchId = sourcePatchIds.get(commit);
+    if (replayCommits.has(commit)) return false;
+    return (patchId && targetPatchIds.has(patchId))
+      || targetSubjects.has(git(["show", "-s", "--format=%s", commit]));
+  };
+  const commits = sourceCommits.filter(commit => !isAlreadyPresent(commit));
+  const skipped = sourceCommits
+    .filter(isAlreadyPresent)
+    .map(sha => {
+      const patchId = sourcePatchIds.get(sha);
+      const reason = patchId && targetPatchIds.has(patchId)
+        ? "already present in target by patch ID"
+        : "already present in target by matching subject";
+      return {
+        sha,
+        subject: commitSummary(sha),
+        reason: replayCommits.has(sha) ? "forced by --replay" : reason,
+      };
+    });
+  const report = {
+    dryRun: !apply,
+    source,
+    sourceSha,
+    target: targetBranch,
+    targetSha,
+    base,
+    commits: commits.map(sha => ({ sha, subject: commitSummary(sha) })),
+    skipped,
+    replay: [...replayCommits],
+  };
+  output(report);
+  if (!apply) return;
+  requireClean(true);
+  if (!commits.length) {
+    output({ ...report, dryRun: false, merged: 0 });
+    return;
+  }
+  const backup = `backup/${targetBranch.replace(/[^A-Za-z0-9._-]/g, "-")}-${Date.now()}`;
+  git(["branch", backup, "HEAD"]);
+  for (const [index, commit] of commits.entries()) {
+    await writeFile(config.mergeProgress, `${JSON.stringify({
+      target: targetBranch,
+      commits,
+      index,
+      backup,
+    }, null, 2)}\n`);
+    try { cherryPick(commit, false, a["auto-accept-incoming"]); }
+    catch (error) {
+      throw new Error([
+        "Merge stopped because cherry-pick encountered a conflict.",
+        "Resolve the conflicts, stage the files, then run: merge --continue",
+        "Do not rerun merge --apply; it would reset and replay commits again.",
+        `Original error: ${error.message}`,
+      ].join("\n"));
+    }
+  }
+  validate();
+  await clearMergeProgress();
+  output({ ...report, dryRun: false, backup, merged: commits.length });
 }
 async function land() {
   await classify();
@@ -289,39 +588,144 @@ async function refresh() {
   await clearRefreshProgress();
 }
 async function sync() {
+  if (a.push) throw new Error("sync does not support --push; run publish --apply after reviewing the synced branch");
   const ledger = await loadLedger();
+  if (a.continue) {
+    let progress;
+    try { progress = JSON.parse(await readFile(config.syncProgress, "utf8")); }
+    catch (e) { if (e.code === "ENOENT") throw new Error("No interrupted sync progress found"); throw e; }
+    const branch = git(["branch", "--show-current"]);
+    if (branch !== progress.branch) throw new Error(`Sync continuation must run on ${progress.branch}; current branch is ${branch || "(detached)"}`);
+    let cherryPickPending = true;
+    try { ref("CHERRY_PICK_HEAD", "interrupted sync"); } catch { cherryPickPending = false; }
+    if (cherryPickPending) {
+      if (a["auto-accept-incoming"]) autoAcceptIncoming();
+      try { git(["cherry-pick", "--continue"]); }
+      catch (error) { throw new Error(`Sync continuation requires resolved and staged conflicts: ${error.message}`); }
+    } else {
+      const expectedPatch = patchIds([progress.keep[progress.index]]).get(progress.keep[progress.index]);
+      const currentPatch = patchIds(["HEAD"]).get(ref("HEAD", "current sync HEAD"));
+      const expectedSubject = git(["show", "-s", "--format=%s", progress.keep[progress.index]]);
+      const currentSubject = git(["show", "-s", "--format=%s", "HEAD"]);
+      if ((!expectedPatch || expectedPatch !== currentPatch) && expectedSubject !== currentSubject) {
+        throw new Error("No interrupted sync cherry-pick found; run git cherry-pick --continue for the active conflict, or restore the saved sync backup");
+      }
+    }
+    for (const [offset, commit] of progress.keep.slice(progress.index + 1).entries()) {
+      const index = progress.index + 1 + offset;
+      await writeFile(config.syncProgress, `${JSON.stringify({ ...progress, index }, null, 2)}\n`);
+      try { cherryPick(commit, false, a["auto-accept-incoming"]); }
+      catch (error) {
+        throw new Error([
+          "Sync stopped because cherry-pick encountered another conflict.",
+          "Resolve the conflicts, stage the files, then run: sync --continue",
+          `Original error: ${error.message}`,
+        ].join("\n"));
+      }
+    }
+    validate();
+    ledger.lastMergedUpstream = progress.targetRef;
+    await saveLedger(ledger);
+    await recordAppliedState(progress.remote, progress.branch, progress.expectedRemote);
+    await clearSyncProgress();
+    output({ continued: true, branch, applied: progress.keep.length - progress.index });
+    return;
+  }
   if (apply) {
     requireClean(true);
     git(["fetch", "--prune", "--", config.upstreamRemote]);
     git(["fetch", "--prune", "--", config.originRemote]);
   }
   const upstream = ref(a.target || target, "pinned upstream target");
-  const head = ref("HEAD"), base = ref(a.base || ledger.lastMergedUpstream || `origin/${config.baseBranch}`, "sync base");
-  if (!ancestor(base, head)) throw new Error("Current branch is not based on the selected sync base");
-  const commits = range(base, head);
-  const landedIds = new Set(patchIds(range(ledger.lastMergedUpstream || upstream, upstream)).values());
+  const defaultBase = ledger.lastMergedUpstream || remoteBaseRef(config.originRemote, config.baseBranch);
+  const head = ref("HEAD");
+  const requestedBase = ref(a.base || defaultBase, "sync base");
+  let base = requestedBase;
+  let baseAdjusted = false;
+  if (!ancestor(base, head)) {
+    if (a.base) throw new Error("Current branch is not based on the selected sync base");
+    base = mergeBase(base, head);
+    baseAdjusted = true;
+  }
+  const replayBase = mergeBase(base, upstream);
+  const commits = range(replayBase, head);
+  const landedIds = new Set(patchIds(range(replayBase, upstream)).values());
+  const targetSubjects = new Set(git(["log", "--format=%s", upstream]).split("\n").filter(Boolean));
   const ids = patchIds(commits);
-  const drop = commits.filter(c => landedIds.has(ids.get(c)));
+  const mergeCommits = new Set(commits.filter(commit => git(["rev-list", "--parents", "-n", "1", commit]).trim().split(/\s+/).length > 2));
+  const skipSubjectMatches = a["skip-subject-matches"] === true || a["skip-subject-matches"] === "true";
+  const skipRequested = String(a.skip || "").split(",").map(value => value.trim()).filter(Boolean);
+  const skipCommits = new Set(skipRequested.map(requested => {
+    const matches = commits.filter(commit => commit === requested || commit.startsWith(requested));
+    if (matches.length !== 1) throw new Error(`--skip commit must identify exactly one commit in the sync range: ${requested}`);
+    return matches[0];
+  }));
+  const subjectMatches = new Set(skipSubjectMatches
+    ? commits.filter(commit => targetSubjects.has(git(["show", "-s", "--format=%s", commit])))
+    : []);
+  const drop = commits.filter(c => skipCommits.has(c)
+    || mergeCommits.has(c)
+    || landedIds.has(ids.get(c))
+    || subjectMatches.has(c));
   const keep = commits.filter(c => !drop.includes(c));
-  const report = { dryRun: !apply, base, upstream, keep: keep.map(commitSummary), drop: drop.map(commitSummary), conflicts: gitLines(["diff", "--name-only", `${upstream}...HEAD`]).filter(f => config.hotFiles.includes(f)) };
+  const report = {
+    dryRun: !apply,
+    base,
+    ...(baseAdjusted ? { requestedBase, baseAdjusted: true } : {}),
+    replayBase,
+    upstream,
+    keep: keep.map(commitSummary),
+    drop: drop.map(commit => ({
+      sha: commit,
+      subject: commitSummary(commit),
+      reason: skipCommits.has(commit)
+        ? "manually skipped with --skip"
+        : mergeCommits.has(commit)
+          ? "merge commit is not replayed; replay its individual commits instead"
+          : subjectMatches.has(commit)
+            ? "already represented upstream by matching subject (--skip-subject-matches)"
+          : "already represented upstream",
+    })),
+    skip: [...skipCommits],
+    skipSubjectMatches,
+    conflicts: gitLines(["diff", "--name-only", `${upstream}...HEAD`]).filter(f => config.hotFiles.includes(f)),
+  };
   output(report);
   if (!apply) return;
   requireClean(true);
-  const backup = `backup/${config.baseBranch}-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
-  git(["branch", backup, "HEAD"]);
   const remote = assertPushRemote(a.remote || config.originRemote);
   const branch = git(["branch", "--show-current"]) || config.baseBranch;
+  const backup = `backup/${branch.replace(/[^A-Za-z0-9._-]/g, "-")}-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
+  git(["branch", backup, "HEAD"]);
+  output({ ...report, dryRun: false, backup, applying: true });
   const expectedRemote = remoteTip(remote, branch);
   git(["reset", "--keep", upstream]);
-  for (const commit of keep) git(["cherry-pick", commit]);
+  for (const [index, commit] of keep.entries()) {
+    await writeFile(config.syncProgress, `${JSON.stringify({
+      branch,
+      remote,
+      expectedRemote,
+      targetRef: a.target || target,
+      keep,
+      index,
+      backup,
+    }, null, 2)}\n`);
+    try { cherryPick(commit, false, a["auto-accept-incoming"]); }
+    catch (error) {
+      throw new Error([
+        "Sync stopped because cherry-pick encountered a conflict.",
+        "Resolve the conflicts, stage the files, then run: sync --continue",
+        "Do not rerun sync --apply; it would reset the branch and replay commits again.",
+        `Original error: ${error.message}`,
+      ].join("\n"));
+    }
+  }
   validate();
   ledger.lastMergedUpstream = a.target || target;
   await saveLedger(ledger);
   await recordAppliedState(remote, branch, expectedRemote);
-  if (a.push) {
-    if (remoteTip(remote, branch) !== expectedRemote) throw new Error("Remote changed during sync; refusing to push");
-    git(["push", `--force-with-lease=refs/heads/${branch}:${expectedRemote}`, remote, `HEAD:refs/heads/${branch}`]);
-  }
+  await clearSyncProgress();
+  output({ ...report, dryRun: false, backup, synced: true, branch });
 }
 async function adopt() {
   const pr = a._[1]; if (!pr || !/^\d+$/.test(pr)) throw new Error("adopt requires a numeric PR");
@@ -359,6 +763,21 @@ async function restore() {
   git(["reset", "--hard", backup]);
 }
 async function backup() {
+  if (a.create) {
+    const branch = git(["branch", "--show-current"]);
+    if (!branch) throw new Error("backup --create requires a checked-out branch");
+    const suffix = typeof a.create === "string" ? a.create : a._[1];
+    const name = `backup/${(suffix || `${branch}-${Date.now()}`).replace(/^backup\//, "").replace(/[^A-Za-z0-9._/-]/g, "-")}`;
+    const current = ref("HEAD", "current HEAD");
+    try { git(["show-ref", "--verify", "--quiet", `refs/heads/${name}`]); throw new Error(`Backup already exists: ${name}`); }
+    catch (error) { if (error.message.startsWith("Backup already exists")) throw error; }
+    const report = { dryRun: !apply, action: "create", branch, current, name };
+    output(report);
+    if (!apply) return;
+    git(["branch", name, "HEAD"]);
+    output({ ...report, dryRun: false, created: true });
+    return;
+  }
   if (a.delete) {
     const name = a.delete === true ? a._[1] : a.delete;
     if (!name || !name.startsWith("backup/") || /[\s;&|`$]/.test(name)) {
@@ -373,7 +792,7 @@ async function backup() {
     output({ dryRun: false, action: "delete", deleted: true, name, target });
     return;
   }
-  if (!a.list) throw new Error("backup requires --list or --delete <ref>");
+  if (!a.list) throw new Error("backup requires --create, --list, or --delete <ref>");
   const backups = gitLines([
     "for-each-ref",
     "--sort=-creatordate",
@@ -685,10 +1104,13 @@ async function cleanup() {
   await clearCleanupProgress();
 }
 async function publish() {
+  if (a.push) throw new Error("publish does not accept --push; use publish --apply");
+  const currentBranch = git(["branch", "--show-current"]);
+  const defaultBranch = currentBranch || config.baseBranch;
   if (a.validate) {
     requireClean(true);
     const remote = assertPushRemote(a.remote || config.originRemote);
-    const branch = a.branch || git(["branch", "--show-current"]) || config.baseBranch;
+    const branch = a.branch || defaultBranch;
     validate();
     const expectedRemote = git(["ls-remote", remote, `refs/heads/${branch}`]).split(/\s+/)[0];
     await recordAppliedState(remote, branch, expectedRemote);
@@ -696,12 +1118,12 @@ async function publish() {
     return;
   }
   if (!apply) {
-    output({ dryRun: true, remote: a.remote || config.originRemote, branch: a.branch || config.baseBranch });
+    output({ dryRun: true, remote: a.remote || config.originRemote, branch: a.branch || defaultBranch });
     return;
   }
   requireClean(true);
   const remote = assertPushRemote(a.remote || config.originRemote);
-  const branch = a.branch || config.baseBranch;
+  const branch = a.branch || defaultBranch;
   let state;
   try { state = JSON.parse(await readFile(config.appliedState, "utf8")); }
   catch (e) { if (e.code === "ENOENT") throw new Error("No validated apply state found; run an apply operation first"); throw e; }
@@ -710,6 +1132,6 @@ async function publish() {
   validate();
   git(["push", `--force-with-lease=refs/heads/${branch}:${state.expectedRemote}`, remote, `HEAD:refs/heads/${branch}`]);
 }
-const commands = { analyze, classify, copy, delete: deleteBranch, land, landed, refresh, sync, adopt, restore, backup, publish, cleanup, "reset-candidates": resetCandidates };
+const commands = { analyze, classify, copy, worktree, delete: deleteBranch, merge, land, landed, refresh, sync, adopt, restore, backup, publish, cleanup, "reset-candidates": resetCandidates };
 try { if (!commands[command]) throw new Error(`Unknown operation: ${command}`); await commands[command](); }
 catch (e) { console.error(`upstream toolkit: ${e.message}`); process.exitCode = 1; }

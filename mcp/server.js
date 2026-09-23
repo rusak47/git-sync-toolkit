@@ -64,7 +64,7 @@ function requestKey(name, args) {
   return JSON.stringify([name, Object.fromEntries(keys.map(k => [k, copy[k]]))]);
 }
 function mutating(name, args) {
-  return ["sync_refresh", "sync_cleanup", "sync_copy_worktree", "sync_delete_branch", "sync_restore_backup", "sync_publish"].includes(name) && args.apply === true;
+  return ["sync_refresh", "sync_cleanup", "sync_copy_worktree", "sync_merge", "sync_checkout_worktree", "sync_delete_branch", "sync_restore_backup", "sync_publish"].includes(name) && args.apply === true;
 }
 function issueConfirmation(name, args, data) {
   const token = randomBytes(18).toString("base64url");
@@ -101,6 +101,22 @@ const tools = [
         confirmation: confirmationProp,
         continue: { type: "boolean", description: "Resume an interrupted refresh from saved progress. Mutually exclusive with remoteRef." },
         autoAcceptIncoming: { type: "boolean", description: "Auto-resolve conflicts by accepting incoming (theirs) changes. Only meaningful with continue or when conflicts expected." },
+      },
+    },
+    {
+      name: "sync_merge",
+      description: "Preview or cherry-pick source-branch commits into the checked-out target branch. The target defaults to the current branch; first call with apply=false (or omitted) to get a confirmation token, then call again with apply=true and the token. Use replay with skipped commit SHAs (comma-separated) to force specific commits to be cherry-picked despite matching target patch IDs or subjects. If a conflict stops the cherry-pick, resolve and stage files, then run `merge --continue`; use `merge --abort` to discard the operation.",
+      inputSchema: {
+        type: "object",
+        required: ["source"],
+        properties: {
+          source: { ...stringProperty, description: "Source branch whose commits should be cherry-picked." },
+          target: { ...stringProperty, description: "Checked-out target branch. Defaults to the current branch." },
+          replay: { ...stringProperty, description: "Optional comma-separated full or unambiguous short SHAs from the source branch to replay even when merge would skip them as already present." },
+          worktree: worktreePathProp,
+          apply: applyProp,
+          confirmation: confirmationProp,
+        },
       },
     },
   },
@@ -152,7 +168,7 @@ const tools = [
   },
   {
     name: "sync_copy_worktree",
-    description: "Preview or create a new branch and worktree from a source branch. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",
+    description: "Preview or create or replace a branch and worktree from a source branch. Existing targets require force=true; replacement is refused if the target is checked out by any worktree. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",
     inputSchema: {
       type: "object",
       required: ["source", "target"],
@@ -160,8 +176,23 @@ const tools = [
         source: { ...stringProperty, description: "Source branch to copy from (e.g., upstream/master)." },
         target: { ...stringProperty, description: "New branch name to create." },
         worktree: worktreePathProp,
+        force: { type: "boolean", description: "Replace an existing target branch when it is not checked out by any worktree. A backup ref is created." },
         apply: applyProp,
         confirmation: confirmationProp,
+      },
+    },
+    {
+      name: "sync_checkout_worktree",
+      description: "Preview or check out an existing local or origin branch into a guessed worktree. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",
+      inputSchema: {
+        type: "object",
+        required: ["branch"],
+        properties: {
+          branch: { ...stringProperty, description: "Local branch name, or branch available as origin/<branch>." },
+          worktree: worktreePathProp,
+          apply: applyProp,
+          confirmation: confirmationProp,
+        },
       },
     },
   },
@@ -227,6 +258,11 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
       if (args.continue) cliArgs.push("--continue");
       if (args.autoAcceptIncoming) cliArgs.push("--auto-accept-incoming");
       if (args.apply) cliArgs.push("--apply");
+    } else if (request.params.name === "sync_merge") {
+      cliArgs.push("merge", "--source", args.source);
+      if (args.target) cliArgs.push("--target", args.target);
+      if (args.replay) cliArgs.push("--replay", args.replay);
+      if (args.apply) cliArgs.push("--apply");
     } else if (request.params.name === "sync_cleanup") {
       cliArgs.push("cleanup", "--plan", args.plan);
       if (args.continue) cliArgs.push("--continue");
@@ -242,6 +278,10 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
     } else if (request.params.name === "sync_copy_worktree") {
       cliArgs.push("copy", "--source", args.source, "--target", args.target);
       if (args.worktree) cliArgs.push("--worktree", args.worktree);
+      if (args.force) cliArgs.push("--force");
+      if (args.apply) cliArgs.push("--apply");
+    } else if (request.params.name === "sync_checkout_worktree") {
+      cliArgs.push("worktree", "checkout", args.branch);
       if (args.apply) cliArgs.push("--apply");
     } else if (request.params.name === "sync_delete_branch") {
       cliArgs.push("delete", "--delete", args.branch);
@@ -258,7 +298,7 @@ server.setRequestHandler(CallToolRequestSchema, async request => {
     }
     if (typeof args.worktree === "string") cliArgs.push("--worktree", args.worktree);
     const data = await run(cliArgs);
-    if (["sync_refresh", "sync_cleanup", "sync_copy_worktree", "sync_delete_branch", "sync_restore_backup", "sync_publish"].includes(request.params.name) && !args.apply) {
+    if (["sync_refresh", "sync_cleanup", "sync_copy_worktree", "sync_merge", "sync_checkout_worktree", "sync_delete_branch", "sync_restore_backup", "sync_publish"].includes(request.params.name) && !args.apply) {
       return result(data, issueConfirmation(request.params.name, args, data));
     }
     return result(data);
