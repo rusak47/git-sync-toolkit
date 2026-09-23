@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs, git, gitLines, ref, range, ancestor, mergeBase, patchIds, loadLedger, saveLedger, requireClean, assertPushRemote, assertValidatedState, commitSummary, config } from "./lib.js";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -95,6 +95,36 @@ function remoteBaseRef(remote, branch) {
     return ref(head, `${remote} default branch`), head;
   }
 }
+function remoteForRef(value) {
+  const candidate = String(value).split("/", 1)[0];
+  if (!candidate) return null;
+  try { git(["remote", "get-url", candidate]); return candidate; }
+  catch { return null; }
+}
+function githubRepoForRemote(remote) {
+  let url;
+  try { url = git(["remote", "get-url", remote]); }
+  catch { return null; }
+  const match = url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/i);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+function pullRequestDetails(pr, repo) {
+  const args = ["pr", "view", pr];
+  if (repo) args.push("--repo", repo);
+  args.push("--json", "url,title,body,headRefName,baseRefName,additions,deletions,files");
+  const raw = execFileSync("gh", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  const details = JSON.parse(raw);
+  return {
+    ...details,
+    body: details.body || "",
+    files: (details.files || []).map(file => ({
+      path: file.path,
+      additions: file.additions,
+      deletions: file.deletions,
+      changeType: file.changeType,
+    })),
+  };
+}
 function autoAcceptIncoming() {
   const paths = gitLines(["diff", "--name-only", "--diff-filter=U"]);
   if (!paths.length) return false;
@@ -113,6 +143,14 @@ function cherryPick(commit, noCommit, autoAccept) {
       git(["cherry-pick", "--continue"]);
     }
   }
+}
+function skipEmptyCherryPick(error) {
+  if (!/cherry-pick.*empty|previous cherry-pick is now empty/i.test(error.message)) return false;
+  try { ref("CHERRY_PICK_HEAD", "empty cherry-pick"); }
+  catch { return false; }
+  if (git(["status", "--porcelain", "--untracked-files=all"]) !== "") return false;
+  git(["cherry-pick", "--skip"]);
+  return true;
 }
 function fixupsFor(commit, fixups) {
   return (fixups || []).filter(fixup => fixup.after === commit);
@@ -186,22 +224,72 @@ async function copy() {
   output({ ...result, dryRun: false, copied: true, ...(backup ? { backup } : {}) });
 }
 async function worktree() {
+  if (a.move) {
+    if (!a.bulk) throw new Error("worktree --move requires --bulk");
+    if (typeof a.target !== "string" || !a.target) {
+      throw new Error("worktree --move --bulk requires --target <destination-root>");
+    }
+    const destinationRoot = resolve(invocationCwd, a.target);
+    const blocks = git(["worktree", "list", "--porcelain"]).split("\n\n")
+      .map(block => block.split("\n").filter(Boolean));
+    const moves = blocks.slice(1).map(block => {
+      const source = block.find(line => line.startsWith("worktree "))?.slice("worktree ".length);
+      const branchLine = block.find(line => line.startsWith("branch "));
+      const branch = branchLine?.slice("branch refs/heads/".length);
+      const head = block.find(line => line.startsWith("HEAD "))?.slice("HEAD ".length);
+      if (!source || !head) throw new Error("Unable to parse a linked worktree");
+      const name = branch || source.split("/").at(-1) || `detached-${head.slice(0, 10)}`;
+      return { source, destination: join(destinationRoot, name), branch: branch || null, head };
+    }).filter(move => resolve(move.source) !== resolve(move.destination));
+    for (const move of moves) {
+      if (resolve(move.destination) === resolve(move.source)) continue;
+      try {
+        await stat(move.destination);
+        throw new Error(`Destination already exists: ${move.destination}`);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+    const result = { dryRun: !apply, action: "move", bulk: true, destinationRoot, moves };
+    output(result);
+    if (!apply) return;
+    for (const move of moves) {
+      await mkdir(dirname(move.destination), { recursive: true });
+      git(["worktree", "move", move.source, move.destination]);
+    }
+    output({ ...result, dryRun: false, moved: moves.length });
+    return;
+  }
   if (a._[1] !== "checkout") throw new Error("worktree requires the checkout subcommand");
   const requested = a._[2];
   if (!requested) throw new Error("worktree checkout requires a branch name");
   if (!/^[A-Za-z0-9._/-]+$/.test(requested) || requested.startsWith("/") || requested.endsWith("/")) {
     throw new Error("Invalid branch name");
   }
-  const remotePrefix = `${config.originRemote}/`;
-  const branch = requested.startsWith(remotePrefix) ? requested.slice(remotePrefix.length) : requested;
+  const requestedRemote = requested.includes("/") ? requested.split("/", 1)[0] : "";
+  const isRemoteRef = (() => {
+    if (!requestedRemote) return false;
+    try { git(["remote", "get-url", requestedRemote]); return true; }
+    catch { return false; }
+  })();
+  const remote = isRemoteRef ? requestedRemote : config.originRemote;
+  const remoteBranch = isRemoteRef ? requested.slice(requestedRemote.length + 1) : requested;
+  if (!remoteBranch) throw new Error("worktree checkout requires a branch name");
+  const branch = a.target || (isRemoteRef && remote !== config.originRemote ? requested : remoteBranch);
+  if (typeof branch !== "string"
+    || !/^[A-Za-z0-9._/-]+$/.test(branch)
+    || branch.startsWith("/")
+    || branch.endsWith("/")) {
+    throw new Error("Invalid target branch name");
+  }
   const localExists = (() => {
     try { git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]); return true; }
     catch { return false; }
   })();
-  const remoteRef = `${config.originRemote}/${branch}`;
+  const remoteRef = `${remote}/${remoteBranch}`;
   if (!localExists) {
     try { ref(remoteRef, "remote branch"); }
-    catch { throw new Error(`Branch not found locally or on ${config.originRemote}: ${branch}`); }
+    catch { throw new Error(`Branch not found locally or on ${remote}: ${remoteBranch}`); }
   }
   const blocks = git(["worktree", "list", "--porcelain"]).split("\n\n").map(block => block.split("\n"));
   const attached = blocks.find(block => block.includes(`branch refs/heads/${branch}`));
@@ -255,7 +343,11 @@ async function guessWorktreeRoot() {
     .filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
   let root = a.worktree && resolve(invocationCwd, a.worktree);
   if (!root && worktrees.length > 1) {
-    const guessed = pathDirname(worktrees[1]);
+    let guessed = pathDirname(worktrees[1]);
+    while (guessed !== pathDirname(guessed)
+      && !["worktree", "worktrees"].includes(guessed.split("/").at(-1))) {
+      guessed = pathDirname(guessed);
+    }
     if (!json && input.isTTY && outputStream.isTTY) {
       const rl = createInterface({ input, output: outputStream });
       const answer = await rl.question(`Guessed worktrees root "${guessed}". Use it? [Y/n] `);
@@ -419,6 +511,9 @@ async function merge() {
   const targetPatchIds = new Set([...patchIds(gitLines(["rev-list", "--reverse", targetSha])).values()].filter(Boolean));
   const targetSubjects = new Set(git(["log", "--format=%s", targetSha]).split("\n").filter(Boolean));
   const sourcePatchIds = patchIds(sourceCommits);
+  const mergeCommits = new Set(sourceCommits.filter(commit =>
+    git(["rev-list", "--parents", "-n", "1", commit]).trim().split(/\s+/).length > 2
+  ));
   const replayRequested = String(a.replay || "").split(",").map(value => value.trim()).filter(Boolean);
   const replayCommits = new Set(replayRequested.map(requested => {
     const matches = sourceCommits.filter(commit => commit === requested || commit.startsWith(requested));
@@ -427,6 +522,7 @@ async function merge() {
   }));
   const isAlreadyPresent = commit => {
     const patchId = sourcePatchIds.get(commit);
+    if (mergeCommits.has(commit)) return true;
     if (replayCommits.has(commit)) return false;
     return (patchId && targetPatchIds.has(patchId))
       || targetSubjects.has(git(["show", "-s", "--format=%s", commit]));
@@ -436,9 +532,11 @@ async function merge() {
     .filter(isAlreadyPresent)
     .map(sha => {
       const patchId = sourcePatchIds.get(sha);
-      const reason = patchId && targetPatchIds.has(patchId)
-        ? "already present in target by patch ID"
-        : "already present in target by matching subject";
+      const reason = mergeCommits.has(sha)
+        ? "merge commit is not replayed; replay its individual commits instead"
+        : patchId && targetPatchIds.has(patchId)
+          ? "already present in target by patch ID"
+          : "already present in target by matching subject";
       return {
         sha,
         subject: commitSummary(sha),
@@ -601,7 +699,11 @@ async function sync() {
     if (cherryPickPending) {
       if (a["auto-accept-incoming"]) autoAcceptIncoming();
       try { git(["cherry-pick", "--continue"]); }
-      catch (error) { throw new Error(`Sync continuation requires resolved and staged conflicts: ${error.message}`); }
+      catch (error) {
+        if (!skipEmptyCherryPick(error)) {
+          throw new Error(`Sync continuation requires resolved and staged conflicts: ${error.message}`);
+        }
+      }
     } else {
       const expectedPatch = patchIds([progress.keep[progress.index]]).get(progress.keep[progress.index]);
       const currentPatch = patchIds(["HEAD"]).get(ref("HEAD", "current sync HEAD"));
@@ -616,6 +718,7 @@ async function sync() {
       await writeFile(config.syncProgress, `${JSON.stringify({ ...progress, index }, null, 2)}\n`);
       try { cherryPick(commit, false, a["auto-accept-incoming"]); }
       catch (error) {
+        if (skipEmptyCherryPick(error)) continue;
         throw new Error([
           "Sync stopped because cherry-pick encountered another conflict.",
           "Resolve the conflicts, stage the files, then run: sync --continue",
@@ -633,8 +736,10 @@ async function sync() {
   }
   if (apply) {
     requireClean(true);
-    git(["fetch", "--prune", "--", config.upstreamRemote]);
-    git(["fetch", "--prune", "--", config.originRemote]);
+    const targetRemote = remoteForRef(a.target || target) || config.upstreamRemote;
+    for (const remote of new Set([targetRemote, config.originRemote])) {
+      git(["fetch", "--prune", "--", remote]);
+    }
   }
   const upstream = ref(a.target || target, "pinned upstream target");
   const defaultBase = ledger.lastMergedUpstream || remoteBaseRef(config.originRemote, config.baseBranch);
@@ -729,9 +834,20 @@ async function sync() {
 }
 async function adopt() {
   const pr = a._[1]; if (!pr || !/^\d+$/.test(pr)) throw new Error("adopt requires a numeric PR");
-  if (!apply) return output({ dryRun: true, command: `gh pr diff ${pr}` });
+  const remote = a.remote || config.upstreamRemote;
+  const repo = a.repo || githubRepoForRemote(remote);
+  if (repo && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("Invalid GitHub repository; use owner/repository");
+  const details = pullRequestDetails(pr, repo);
+  if (!apply) return output({
+    dryRun: true,
+    pr: Number(pr),
+    ...(repo ? { repo } : {}),
+    ...details,
+    command: `gh pr diff ${pr}`,
+  });
   requireClean(true);
-  git(["fetch", config.upstreamRemote, `pull/${pr}/head`]);
+  const source = a.remote ? remote : a.repo ? `https://github.com/${repo}.git` : remote;
+  git(["fetch", source, `pull/${pr}/head`]);
   const sourceSha = ref("FETCH_HEAD", "PR source");
   const patchId = patchIds([sourceSha]).get(sourceSha);
   const patch = git(["format-patch", "-1", "--stdout", sourceSha]);

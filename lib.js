@@ -5,7 +5,10 @@ import { config } from "./config.js";
 export { config };
 
 export const git = (args, options = {}) => execFileSync("git", args, {
-  encoding: "utf8", stdio: ["ignore", "pipe", options.allowStderr ? "pipe" : "pipe"], ...options
+  encoding: "utf8",
+  maxBuffer: 64 * 1024 * 1024,
+  stdio: ["ignore", "pipe", options.allowStderr ? "pipe" : "pipe"],
+  ...options,
 }).trim();
 export const gitLines = args => git(args).split("\n").filter(Boolean);
 export function ref(value, label = "ref") {
@@ -47,8 +50,17 @@ export function range(base, tip = "HEAD") {
 }
 export function patchIds(commits) {
   return new Map(commits.map(sha => {
-    const out = execFileSync("git", ["show", "--pretty=format:", sha], { encoding: "utf8" });
-    const line = execFileSync("git", ["patch-id", "--stable"], { input: out, encoding: "utf8" }).trim();
+    const parents = git(["rev-list", "--parents", "-n", "1", sha]).split(/\s+/);
+    if (parents.length > 2) return [sha, ""];
+    const out = execFileSync("git", ["show", "--pretty=format:", "--no-ext-diff", sha], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const line = execFileSync("git", ["patch-id", "--stable"], {
+      input: out,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    }).trim();
     return [sha, line ? line.split(/\s+/)[0] : ""];
   }));
 }

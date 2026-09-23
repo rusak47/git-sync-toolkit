@@ -150,9 +150,41 @@ node .docs/scripts/git-sync-toolkit/cli.js worktree checkout test/latency-aware-
 node .docs/scripts/git-sync-toolkit/cli.js worktree checkout test/latency-aware-routing --apply
 ```
 
+Remote-qualified refs are also supported. For example, this creates a local
+`kilo-org/main` branch that tracks `kilo-org/main` and attaches it to its own
+worktree:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js worktree checkout kilo-org/main --apply
+```
+
+Use `--target` to choose a different local branch name and worktree path:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js worktree checkout \
+  kilo-org/main --target test/kilo-main --apply
+```
+
 The command previews by default. If `--worktree` is supplied, it is used as
-the worktree root; otherwise the toolkit guesses it from existing worktrees.
-The branch must not already be checked out in another worktree.
+the worktree root; otherwise the toolkit guesses it from existing worktrees,
+stopping at an ancestor named `worktree` or `worktrees` rather than selecting a
+branch subdirectory. The branch must not already be checked out in another
+worktree.
+
+To relocate all linked worktrees into one directory without moving the
+primary checkout, preview and then apply:
+
+```sh
+node .docs/scripts/git-sync-toolkit/cli.js worktree \
+  --move --bulk --target /tmp/sketchbook/kilocode/worktrees
+node .docs/scripts/git-sync-toolkit/cli.js worktree \
+  --move --bulk --target /tmp/sketchbook/kilocode/worktrees --apply
+```
+
+Branch worktrees keep their branch paths below the destination root;
+detached worktrees keep their original directory basename. Existing
+destination directories are rejected rather than overwritten. The primary
+checkout is not moved.
 
 ### Delete a branch and its worktree
 
@@ -415,6 +447,11 @@ Repeat the resolve, stage, and `sync --continue` steps for additional
 conflicts. The continuation completes validation, ledger updates, and publish
 state only after all kept commits are replayed.
 
+If conflict resolution makes a replayed commit empty, `sync --continue`
+automatically skips that commit and continues with the remaining replay list.
+The saved progress file tracks the current index, so an interrupted
+continuation can be resumed without replaying completed commits.
+
 To separate rebuilding from publishing, run sync, then publish the completed
 result:
 
@@ -441,7 +478,16 @@ the sync result.
 <example>
 <command>node .docs/scripts/git-sync-toolkit/cli.js adopt 3352</command>
 <command>node .docs/scripts/git-sync-toolkit/cli.js adopt 3352 --apply</command>
+<command>node .docs/scripts/git-sync-toolkit/cli.js adopt 3352 --repo owner/repository</command>
+<command>node .docs/scripts/git-sync-toolkit/cli.js adopt 32425 --repo anomalyco/opencode</command>
 </example>
+
+The preview queries GitHub for the PR title, description, branch information,
+overall additions/deletions, and changed-file summary before applying it.
+The repository is inferred from the configured upstream remote when possible;
+use `--repo owner/repository` when the current checkout has no upstream remote
+or when the PR belongs to a different repository. `--remote` selects the Git
+remote used to fetch the PR head during `--apply`.
 
 ### Generate and review a cleanup plan
 
