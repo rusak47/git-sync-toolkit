@@ -40,7 +40,7 @@ test("stdio server discovers tools and confirms a copy operation", async t => {
   await client.connect(transport);
 
   const listed = await client.listTools();
-  assert.equal(listed.tools.length, 10);
+  assert.equal(listed.tools.length, 12);
   assert.ok(listed.tools.some(tool => tool.name === "sync_copy_worktree"));
   const worktrees = jsonResult(await client.callTool({
     name: "sync_list_worktrees",

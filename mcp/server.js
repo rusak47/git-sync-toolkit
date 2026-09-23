@@ -103,6 +103,7 @@ const tools = [
         autoAcceptIncoming: { type: "boolean", description: "Auto-resolve conflicts by accepting incoming (theirs) changes. Only meaningful with continue or when conflicts expected." },
       },
     },
+  },
     {
       name: "sync_merge",
       description: "Preview or cherry-pick source-branch commits into the checked-out target branch. The target defaults to the current branch; first call with apply=false (or omitted) to get a confirmation token, then call again with apply=true and the token. Use replay with skipped commit SHAs (comma-separated) to force specific commits to be cherry-picked despite matching target patch IDs or subjects. If a conflict stops the cherry-pick, resolve and stage files, then run `merge --continue`; use `merge --abort` to discard the operation.",
@@ -119,7 +120,6 @@ const tools = [
         },
       },
     },
-  },
   {
     name: "sync_cleanup",
     description: [
@@ -181,6 +181,7 @@ const tools = [
         confirmation: confirmationProp,
       },
     },
+  },
     {
       name: "sync_checkout_worktree",
       description: "Preview or check out an existing local or origin branch into a guessed worktree. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",
@@ -195,7 +196,6 @@ const tools = [
         },
       },
     },
-  },
   {
     name: "sync_delete_branch",
     description: "Preview or delete a local branch, optionally removing its associated worktree. First call with apply=false (or omitted) to get a confirmation token; then call again with apply=true and the confirmation token.",

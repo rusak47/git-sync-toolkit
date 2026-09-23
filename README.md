@@ -71,6 +71,25 @@ Validation defaults to the toolkit's own tests. Replace it for a host
 repository by setting `SYNC_VALIDATION_COMMANDS` to a JSON array of
 `[command,args]` pairs.
 
+### Run the full test suite before commits
+
+Configure the repository-local Git hook once:
+
+```sh
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit
+```
+
+After setup, every commit runs both test suites:
+
+```sh
+npm test
+npm --prefix mcp test
+```
+
+The commit is rejected if either suite fails. The hook is stored in
+`.githooks/pre-commit`, so the setup command must be repeated in each clone.
+
 For persistent project settings, create the ignored `config.local.js` beside
 the toolkit:
 
